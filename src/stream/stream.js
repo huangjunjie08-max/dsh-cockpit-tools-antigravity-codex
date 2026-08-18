@@ -30,6 +30,78 @@ const ANTIGRAVITY_NO_PREAMBLE_INSTRUCTION =
 
 let toolCallCounter = 0;
 
+function firstUsageNumber(...values) {
+  return values.find((value) => typeof value === "number" && Number.isFinite(value)) ?? 0;
+}
+
+export function normalizeAntigravityUsage(data) {
+  const usage =
+    data.response?.usageMetadata || data.usageMetadata || data.response?.usage || data.usage;
+  if (!usage || typeof usage !== "object") return undefined;
+
+  const inputDetails = usage.input_tokens_details || usage.inputTokensDetails || {};
+  const outputDetails = usage.output_tokens_details || usage.outputTokensDetails || {};
+  const isAnthropicUsage =
+    usage.cache_read_input_tokens !== undefined ||
+    usage.cache_creation_input_tokens !== undefined ||
+    usage.uncached_input_tokens !== undefined;
+  const cacheReadTokens = firstUsageNumber(
+    usage.cachedContentTokenCount,
+    usage.total_cached_tokens,
+    usage.totalCachedTokens,
+    usage.cacheReadTokens,
+    usage.cache_read_tokens,
+    usage.cache_read_input_tokens,
+    usage.cached_tokens,
+    inputDetails.cached_tokens,
+    inputDetails.cache_read_tokens,
+  );
+  const cacheWriteTokens = firstUsageNumber(
+    usage.cacheWriteTokens,
+    usage.cache_write_tokens,
+    usage.cache_creation_input_tokens,
+    usage.cache_creation_tokens,
+    usage.cacheCreationInputTokens,
+    usage.cacheCreationTokens,
+    inputDetails.cache_write_tokens,
+  );
+  const inputTokenCount = firstUsageNumber(
+    usage.uncached_input_tokens,
+    usage.promptTokenCount,
+    usage.prompt_tokens,
+    usage.inputTokens,
+    usage.input_tokens,
+    usage.total_input_tokens,
+    usage.totalInputTokens,
+  );
+  const reasoningTokens = firstUsageNumber(
+    usage.thoughtsTokenCount,
+    usage.reasoning_tokens,
+    usage.reasoningTokens,
+    usage.thinking_tokens,
+    outputDetails.reasoning_tokens,
+    outputDetails.reasoningTokens,
+  );
+  const outputTokens = isAnthropicUsage
+    ? firstUsageNumber(usage.output_tokens, usage.outputTokens, usage.completion_tokens)
+    : firstUsageNumber(
+          usage.candidatesTokenCount,
+          usage.output_tokens,
+          usage.outputTokens,
+          usage.completion_tokens,
+        ) + reasoningTokens;
+
+  return {
+    inputTokens: isAnthropicUsage
+      ? inputTokenCount
+      : Math.max(0, inputTokenCount - cacheReadTokens - cacheWriteTokens),
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    reasoningTokens,
+  };
+}
+
 function sanitizeToolCallId(id, fallbackName) {
   const cleaned = (id || "").replace(/[^a-zA-Z0-9_-]/g, "_");
   const capped = cleaned.slice(0, 64);
@@ -577,20 +649,12 @@ export async function* streamAntigravity(options, credentials) {
           }
         }
 
-        // Usage Metadata
-        const usage = data.response?.usageMetadata || data.usageMetadata;
+        const usage = normalizeAntigravityUsage(data);
         if (usage) {
-          const inputTokens = usage.promptTokenCount || 0;
-          const cacheReadTokens = usage.cachedContentTokenCount || 0;
-          const outputTokens =
-            (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0);
           yield {
             type: "usage",
             usage: {
-              inputTokens: Math.max(0, inputTokens - cacheReadTokens),
-              outputTokens,
-              cacheReadTokens,
-              reasoningTokens: usage.thoughtsTokenCount || 0,
+              ...usage,
             },
           };
         }
