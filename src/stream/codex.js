@@ -1,6 +1,6 @@
 import { sanitizeText, isRecord, nowRequestId } from "../utils/util.js";
 import { safeError, redactSecrets } from "../utils/security.js";
-import { resolveCodexModelId } from "../models/codex.js";
+import { CODEX_MODELS, resolveCodexModelId } from "../models/codex.js";
 
 const DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
 
@@ -8,7 +8,19 @@ const DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
  * Resolve "auto" reasoning effort for Codex models.
  * OpenAI Codex API only accepts low/medium/high — "auto" must be resolved locally.
  */
-function resolveCodexAutoEffort(messages = []) {
+function resolveCodexAutoEffort(modelId, messages = []) {
+  const model = CODEX_MODELS.find((item) => item.id === resolveCodexModelId(modelId));
+  const availableEfforts = (model?.reasoning?.efforts || [])
+    .map((effort) => effort.id)
+    .filter((effort) => effort !== "auto");
+  const pick = (preferred) => {
+    if (availableEfforts.includes(preferred)) return preferred;
+    for (const effort of ["high", "medium", "low"]) {
+      if (availableEfforts.includes(effort)) return effort;
+    }
+    return availableEfforts[0];
+  };
+
   const allText = (messages || [])
     .flatMap((m) => m.content || [])
     .filter((c) => c.type === "text")
@@ -44,9 +56,9 @@ function resolveCodexAutoEffort(messages = []) {
     lastText.length < 150 &&
     lowSignals.some((re) => re.test(lastText.trim()));
 
-  if (isHigh) return "high";
-  if (isLow) return "low";
-  return "medium";
+  if (isHigh) return pick("high");
+  if (isLow) return pick("low");
+  return pick("medium");
 }
 
 function convertDshMessagesToCodex(messages) {
@@ -116,12 +128,13 @@ function convertDshToolsToCodex(tools) {
 export function buildCodexRequestBody(options) {
   const modelId = resolveCodexModelId(options.model || "gpt-5.6-sol");
   const input = convertDshMessagesToCodex(options.messages || []);
+  const model = CODEX_MODELS.find((item) => item.id === modelId);
 
   // Resolve "auto" to a concrete effort — OpenAI API doesn't accept "auto"
-  const rawEffort = options.reasoningEffort || "medium";
+  const rawEffort = options.reasoningEffort || "auto";
   const effort =
     rawEffort === "auto" || rawEffort === "off"
-      ? resolveCodexAutoEffort(options.messages)
+      ? resolveCodexAutoEffort(modelId, options.messages)
       : rawEffort;
 
   const body = {
@@ -131,7 +144,7 @@ export function buildCodexRequestBody(options) {
     store: false,
   };
 
-  if (effort && effort !== "off") {
+  if (model?.reasoning && effort && effort !== "off") {
     body.reasoning = {
       effort,
       summary: "auto",
@@ -249,8 +262,8 @@ export async function* streamCodex(options, credentials) {
         const type = data.type;
 
         // 1. Text delta
-        if (type === "response.text.delta" || data.delta?.text) {
-          const delta = data.delta?.text ?? data.delta;
+        if (type === "response.output_text.delta" || type === "response.text.delta" || data.delta?.text) {
+          const delta = typeof data.delta === "string" ? data.delta : data.delta?.text ?? data.delta;
           if (typeof delta === "string" && delta.length > 0) {
             if (currentBlockType !== "text") {
               if (currentBlockType === "reasoning") {
@@ -272,6 +285,8 @@ export async function* streamCodex(options, credentials) {
         // 2. Reasoning / Thinking delta
         else if (
           type === "response.reasoning.delta" ||
+          type === "response.reasoning_summary_text.delta" ||
+          type === "response.reasoning_text.delta" ||
           type === "response.thought.delta" ||
           data.delta?.thought
         ) {
