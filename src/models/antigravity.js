@@ -1,3 +1,5 @@
+import { getLastUserText } from "../utils/request.js";
+
 export const ANTIGRAVITY_PROVIDER_ID = "antigravity";
 export const ANTIGRAVITY_PROVIDER_NAME = "Google Antigravity";
 
@@ -286,39 +288,25 @@ export function resolveAutoEffort(modelId, messages = []) {
   };
 
   // Analyse the last user message (most recent intent)
-  const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  const allText = (messages || [])
-    .flatMap((m) => m.content || [])
-    .filter((c) => c.type === "text")
-    .map((c) => c.text || "")
-    .join(" ");
-
-  const totalChars = allText.length;
-  const lastText = (lastUser?.content || [])
-    .filter((c) => c.type === "text")
-    .map((c) => c.text || "")
-    .join(" ");
+  const lastText = getLastUserText(messages);
+  const totalChars = lastText.length;
 
   // Signals for HIGH effort
   const highSignals = [
-    /\b(architect|design|refactor|implement|debug|analyze|explain|compare|optimize|migrate|review)\b/i,
-    /\b(step[- ]by[- ]step|in[- ]depth|comprehensive|detailed|complex|algorithm|system)\b/i,
+    /\b(architect|migrate|security|concurrency|algorithm|complex|comprehensive|in[- ]depth)\b/i,
     /```[\s\S]{200,}```/, // large code block
     /\n.*\n.*\n.*\n.*\n/, // multi-line structured content
   ];
 
   // Signals for LOW effort
   const lowSignals = [
-    /^(what|who|when|where|how much|how many|is |are |does |do |can |will )/i,
-    /\?$/, // ends with question mark
+    /^(what|who|when|where|how much|how many|is |are |does |do |can |will |什么|谁|何时|哪里|是否|能否)/i,
+    /[?？]$/, // ends with question mark
   ];
 
   const isHigh =
     totalChars > 3000 ||
-    highSignals.some((re) => re.test(lastText)) ||
-    (messages || []).some((m) =>
-      (m.content || []).some((c) => c.type === "tool-result")
-    );
+    highSignals.some((re) => re.test(lastText));
 
   const isLow =
     totalChars < 300 &&

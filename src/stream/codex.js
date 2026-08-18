@@ -1,5 +1,6 @@
 import { sanitizeText, isRecord, nowRequestId } from "../utils/util.js";
 import { safeError, redactSecrets } from "../utils/security.js";
+import { filterRequestTools, getLastUserText, getSystemInstruction } from "../utils/request.js";
 import { CODEX_MODELS, resolveCodexModelId } from "../models/codex.js";
 
 const DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
@@ -8,7 +9,7 @@ const DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
  * Resolve "auto" reasoning effort for Codex models.
  * "auto" is a UI-only convenience; the API receives a concrete model effort.
  */
-function resolveCodexAutoEffort(modelId, messages = []) {
+export function resolveCodexAutoEffort(modelId, messages = []) {
   const model = CODEX_MODELS.find((item) => item.id === resolveCodexModelId(modelId));
   const availableEfforts = (model?.reasoning?.efforts || [])
     .map((effort) => effort.id)
@@ -21,36 +22,22 @@ function resolveCodexAutoEffort(modelId, messages = []) {
     return availableEfforts[0];
   };
 
-  const allText = (messages || [])
-    .flatMap((m) => m.content || [])
-    .filter((c) => c.type === "text")
-    .map((c) => c.text || "")
-    .join(" ");
-
-  const totalChars = allText.length;
-  const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  const lastText = (lastUser?.content || [])
-    .filter((c) => c.type === "text")
-    .map((c) => c.text || "")
-    .join(" ");
+  const lastText = getLastUserText(messages);
+  const totalChars = lastText.length;
 
   const highSignals = [
-    /\b(architect|design|refactor|implement|debug|analyze|explain|compare|optimize|migrate|review)\b/i,
-    /\b(step[- ]by[- ]step|in[- ]depth|comprehensive|detailed|complex|algorithm|system)\b/i,
+    /\b(architect|migrate|security|concurrency|algorithm|complex|comprehensive|in[- ]depth)\b/i,
     /```[\s\S]{200,}```/,
     /\n.*\n.*\n.*\n.*\n/,
   ];
   const lowSignals = [
-    /^(what|who|when|where|how much|how many|is |are |does |do |can |will )/i,
-    /\?$/,
+    /^(what|who|when|where|how much|how many|is |are |does |do |can |will |什么|谁|何时|哪里|是否|能否)/i,
+    /[?？]$/,
   ];
 
   const isHigh =
     totalChars > 3000 ||
-    highSignals.some((re) => re.test(lastText)) ||
-    (messages || []).some((m) =>
-      (m.content || []).some((c) => c.type === "tool-result")
-    );
+    highSignals.some((re) => re.test(lastText));
   const isLow =
     totalChars < 300 &&
     lastText.length < 150 &&
@@ -65,19 +52,9 @@ function convertDshMessagesToCodex(messages) {
   const input = [];
 
   for (const msg of messages) {
-    if (msg.role === "system") {
-      const text = msg.content
-        ?.map((c) => (c.type === "text" ? c.text : ""))
-        .filter(Boolean)
-        .join("\n");
-      if (text) {
-        input.push({
-          role: "user",
-          content: [{ type: "input_text", text: `[System Instruction]\n${text}` }],
-        });
-      }
-    } else if (msg.role === "user") {
+    if (msg.role === "user") {
       const contents = [];
+      const toolResults = [];
       for (const block of msg.content || []) {
         if (block.type === "text" && block.text) {
           contents.push({ type: "input_text", text: sanitizeText(block.text) });
@@ -90,24 +67,51 @@ function convertDshMessagesToCodex(messages) {
           const resultText =
             block.content?.map((c) => (c.type === "text" ? c.text : JSON.stringify(c))).join("\n") ||
             (block.isError ? "Error" : "Success");
-          contents.push({
-            type: "input_text",
-            text: `[Tool Result for ${block.name || block.toolCallId || "tool"}]:\n${resultText}`,
+          toolResults.push({
+            type: "function_call_output",
+            call_id: block.toolCallId || block.id || block.name || "tool",
+            output: resultText,
           });
         }
       }
       if (contents.length > 0) {
         input.push({ role: "user", content: contents });
       }
+      input.push(...toolResults);
+    } else if (msg.role === "tool" || msg.role === "toolResult") {
+      const resultText =
+        msg.content?.map((c) => (c.type === "text" ? c.text : JSON.stringify(c))).join("\n") ||
+        "Success";
+      input.push({
+        type: "function_call_output",
+        call_id: msg.toolCallId || msg.id || msg.name || "tool",
+        output: resultText,
+      });
     } else if (msg.role === "assistant") {
-      const contents = [];
       for (const block of msg.content || []) {
         if (block.type === "text" && block.text) {
-          contents.push({ type: "output_text", text: sanitizeText(block.text) });
+          input.push({
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: sanitizeText(block.text) }],
+            status: "completed",
+          });
+        } else if (block.type === "tool-call") {
+          let argumentsValue = block.arguments || {};
+          if (typeof argumentsValue === "string") {
+            try {
+              argumentsValue = JSON.parse(argumentsValue);
+            } catch {
+              argumentsValue = {};
+            }
+          }
+          input.push({
+            type: "function_call",
+            call_id: block.id || block.toolCallId || block.name || "tool",
+            name: block.name || "tool",
+            arguments: JSON.stringify(argumentsValue),
+          });
         }
-      }
-      if (contents.length > 0) {
-        input.push({ role: "assistant", content: contents });
       }
     }
   }
@@ -125,11 +129,72 @@ function convertDshToolsToCodex(tools) {
   }));
 }
 
+const codexContinuations = new Map();
+
+function continuationKey(sessionId, modelId) {
+  return `${sessionId}:${modelId}`;
+}
+
+function requestFingerprint(body) {
+  const { input: _input, previous_response_id: _previousResponseId, ...stable } = body;
+  return JSON.stringify(stable);
+}
+
+function comparableItem(item) {
+  if (!item || typeof item !== "object") return item;
+  if (item.type === "function_call") {
+    return { type: item.type, call_id: item.call_id, name: item.name, arguments: item.arguments };
+  }
+  if (item.type === "message") {
+    return {
+      type: item.type,
+      role: item.role,
+      text: (item.content || [])
+        .map((part) => part?.text || part?.refusal || "")
+        .join(""),
+    };
+  }
+  return { type: item.type, call_id: item.call_id, output: item.output };
+}
+
+function hasPrefix(input, prefix) {
+  if (input.length < prefix.length) return false;
+  return prefix.every((item, index) =>
+    JSON.stringify(comparableItem(input[index])) === JSON.stringify(comparableItem(item)),
+  );
+}
+
+function applyCodexContinuation(body, sessionId, modelId) {
+  if (!sessionId || process.env.DSH_CODEX_CONTINUATION === "0") return body;
+  const state = codexContinuations.get(continuationKey(sessionId, modelId));
+  if (!state || state.fingerprint !== requestFingerprint(body)) return body;
+
+  const baseline = [...state.input, ...state.output.filter((item) => item.type !== "reasoning")];
+  if (!hasPrefix(body.input || [], baseline) || body.input.length <= baseline.length) return body;
+
+  return {
+    ...body,
+    previous_response_id: state.responseId,
+    input: body.input.slice(baseline.length),
+  };
+}
+
+function rememberCodexContinuation(sessionId, modelId, body, response) {
+  if (!sessionId || !response?.id) return;
+  codexContinuations.set(continuationKey(sessionId, modelId), {
+    responseId: response.id,
+    input: body.input || [],
+    output: Array.isArray(response.output) ? response.output : [],
+    fingerprint: requestFingerprint(body),
+  });
+}
+
 export function buildCodexRequestBody(options) {
   const modelId = resolveCodexModelId(options.model || "gpt-5.6-sol");
   const input = convertDshMessagesToCodex(options.messages || []);
   const model = CODEX_MODELS.find((item) => item.id === modelId);
   const sessionId = typeof options.sessionId === "string" ? options.sessionId.trim() : "";
+  const instructions = getSystemInstruction(options.system, options.messages || []);
 
   // Resolve "auto" to a concrete effort — OpenAI API doesn't accept "auto"
   const rawEffort = options.reasoningEffort || "auto";
@@ -140,15 +205,20 @@ export function buildCodexRequestBody(options) {
 
   const body = {
     model: modelId,
+    instructions: instructions || "You are a helpful coding assistant.",
     input,
     stream: true,
     store: false,
+    ...(modelId.startsWith("gpt-5.6-")
+      ? { text: { verbosity: process.env.DSH_CODEX_TEXT_VERBOSITY || "low" } }
+      : {}),
     ...(sessionId ? { prompt_cache_key: `dsh-codex:${modelId}:${sessionId}` } : {}),
   };
 
   if (model?.reasoning && effort && effort !== "off") {
     body.reasoning = {
       effort,
+      ...(modelId.startsWith("gpt-5.6-") ? { context: "all_turns" } : {}),
     };
     if (effort !== "none") {
       body.reasoning.summary = "auto";
@@ -160,7 +230,7 @@ export function buildCodexRequestBody(options) {
     body.temperature = options.temperature;
   }
 
-  const tools = convertDshToolsToCodex(options.tools);
+  const tools = convertDshToolsToCodex(filterRequestTools(options.tools, options.messages || []));
   if (tools) {
     body.tools = tools;
   }
@@ -171,6 +241,10 @@ export function buildCodexRequestBody(options) {
 export async function* streamCodex(options, credentials) {
   const token = credentials.access;
   const body = buildCodexRequestBody(options);
+  const fullInput = body.input;
+  const modelId = body.model;
+  const sessionId = typeof options.sessionId === "string" ? options.sessionId.trim() : "";
+  let requestBody = applyCodexContinuation(body, sessionId, modelId);
 
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -184,12 +258,19 @@ export async function* streamCodex(options, credentials) {
   let response;
 
   try {
-    response = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(requestBody),
+        signal: options.signal,
+      });
+      if (response.ok || !requestBody.previous_response_id || ![400, 404].includes(response.status)) break;
+      const retryText = await response.text();
+      if (!/previous_response_id|continuation|response not found|not found/i.test(retryText)) break;
+      codexContinuations.delete(continuationKey(sessionId, modelId));
+      requestBody = { ...body, input: fullInput };
+    }
   } catch (err) {
     if (options.signal?.aborted) {
       yield { type: "finish", reason: { kind: "aborted" } };
@@ -363,7 +444,12 @@ export async function* streamCodex(options, credentials) {
         }
         // 5. Response completed with usage
         else if (type === "response.completed" || type === "response.done") {
-          const usage = data.response?.usage || data.usage;
+          const completedResponse = data.response || data;
+          rememberCodexContinuation(sessionId, modelId, {
+            ...body,
+            input: fullInput,
+          }, completedResponse);
+          const usage = completedResponse.usage;
           if (usage) {
             const inputTokens = usage.input_tokens || usage.prompt_tokens || 0;
             const outputTokens = usage.output_tokens || usage.completion_tokens || 0;

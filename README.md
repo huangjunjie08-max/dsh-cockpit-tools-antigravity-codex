@@ -31,7 +31,13 @@
   - **Gemini 3.7 / 3.6 / 3.5 Flash**：提供 `Low` / `Medium` / `High` 档位。
   - **Claude Sonnet 4.6**：提供 `Low` / `Medium` / `High` 完整 Interleaved Thinking。
   - **GPT-5.6 Sol / Terra / Luna**：提供 `None` / `Low` / `Medium` / `High` / `X-High` / `Max` 档位，并额外提供插件侧 `Auto` 自动选择，默认 `Auto`。
-  - **非思考模型**（如 `gemini-3.1-flash-lite`、`gpt-4o`）：自动隐藏/禁用思考下拉框。
+- **非思考模型**（如 `gemini-3.1-flash-lite`、`gpt-4o`）：自动隐藏/禁用思考下拉框。
+
+### 4. 低 Token 请求优化
+- 所有支持 Auto 的模型都只根据**当前用户请求**判断复杂度，不会因为历史上调用过工具就持续升到 High。
+- Codex 使用稳定的 `instructions`、`prompt_cache_key`、GPT-5.6 的 `reasoning.context`，并在连续会话中尝试 `previous_response_id`；服务端不支持时会自动回退到完整输入。
+- 普通编程请求默认隐藏联网、记忆和图片桥接工具 schema；搜索/记忆请求命中时才临时放开。可用 `DSH_ANTIGRAVITY_TOOL_MODE=all|research|memory|vision` 调整。
+- DSH Web profile 默认切到 Code preset，并关闭 OpenViking、Hindsight、ModLens 的常驻上下文注入。需要记忆或图片能力时，再在 profile patch 中移除对应的 `disabled: true`。
 
 ---
 

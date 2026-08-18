@@ -20,6 +20,7 @@ import {
 } from "../models/antigravity.js";
 import { redactSecrets, safeError } from "../utils/security.js";
 import { antigravityEnv, isRecord, nowRequestId, sanitizeText } from "../utils/util.js";
+import { filterRequestTools, getLastUserText, getSystemInstruction } from "../utils/request.js";
 
 const ANTIGRAVITY_SYSTEM_INSTRUCTION =
   "You are Antigravity, a powerful agentic AI coding assistant designed by Google DeepMind. " +
@@ -238,13 +239,7 @@ export function convertDshMessagesToGemini(messages, modelId, runtimeModel) {
 
   for (const msg of messages) {
     if (msg.role === "system") {
-      const text = msg.content
-        ?.map((c) => (c.type === "text" ? c.text : ""))
-        .filter(Boolean)
-        .join("\n");
-      if (text) {
-        appendParts(GeminiRole.User, [{ text: `[System Instruction]\n${text}` }]);
-      }
+      continue;
     } else if (msg.role === "user") {
       const parts = [];
       for (const block of msg.content || []) {
@@ -334,6 +329,8 @@ export function buildAntigravityRequestBody(options, projectId, runtimeModel) {
     ANTIGRAVITY_SYSTEM_INSTRUCTION,
     ANTIGRAVITY_NO_PREAMBLE_INSTRUCTION,
   ];
+  const dshSystemInstruction = getSystemInstruction(options.system, options.messages || []);
+  if (dshSystemInstruction) systemInstructions.push(dshSystemInstruction);
 
   const request = {
     contents,
@@ -345,7 +342,10 @@ export function buildAntigravityRequestBody(options, projectId, runtimeModel) {
   };
 
   const isCustomEngine = modelId.startsWith("claude-") || modelId.startsWith("gpt-oss-");
-  const tools = convertDshToolsToGemini(options.tools, isCustomEngine);
+  const tools = convertDshToolsToGemini(
+    filterRequestTools(options.tools, options.messages || []),
+    isCustomEngine,
+  );
   if (tools) {
     request.tools = tools;
     if (modelId.startsWith("claude-")) {
