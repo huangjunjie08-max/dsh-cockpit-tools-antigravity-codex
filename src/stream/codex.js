@@ -154,10 +154,6 @@ export function buildCodexRequestBody(options) {
     }
   }
 
-  if (options.maxTokens) {
-    body.max_output_tokens = options.maxTokens;
-  }
-
   if (options.temperature !== undefined) {
     body.temperature = options.temperature;
   }

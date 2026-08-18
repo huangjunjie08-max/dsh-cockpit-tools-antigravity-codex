@@ -85,7 +85,6 @@ export class AntigravityAndCodexLlmAdapter extends BaseLlmAdapter {
         context: {
           contextWindow: found.contextWindow,
         },
-        defaultMaxTokens: found.maxTokens,
         inputModalities: ["text", "image"],
         reasoning: found.reasoning
           ? {
