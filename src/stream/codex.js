@@ -129,6 +129,7 @@ export function buildCodexRequestBody(options) {
   const modelId = resolveCodexModelId(options.model || "gpt-5.6-sol");
   const input = convertDshMessagesToCodex(options.messages || []);
   const model = CODEX_MODELS.find((item) => item.id === modelId);
+  const sessionId = typeof options.sessionId === "string" ? options.sessionId.trim() : "";
 
   // Resolve "auto" to a concrete effort — OpenAI API doesn't accept "auto"
   const rawEffort = options.reasoningEffort || "auto";
@@ -142,6 +143,7 @@ export function buildCodexRequestBody(options) {
     input,
     stream: true,
     store: false,
+    ...(sessionId ? { prompt_cache_key: `dsh-codex:${modelId}:${sessionId}` } : {}),
   };
 
   if (model?.reasoning && effort && effort !== "off") {
@@ -366,14 +368,16 @@ export async function* streamCodex(options, credentials) {
             const inputTokens = usage.input_tokens || usage.prompt_tokens || 0;
             const outputTokens = usage.output_tokens || usage.completion_tokens || 0;
             const cacheReadTokens = usage.input_tokens_details?.cached_tokens || 0;
+            const cacheWriteTokens = usage.input_tokens_details?.cache_write_tokens || 0;
             const reasoningTokens = usage.output_tokens_details?.reasoning_tokens || 0;
 
             yield {
               type: "usage",
               usage: {
-                inputTokens: inputTokens - cacheReadTokens,
+                inputTokens: inputTokens - cacheReadTokens - cacheWriteTokens,
                 outputTokens,
                 cacheReadTokens,
+                cacheWriteTokens,
                 reasoningTokens,
               },
             };
