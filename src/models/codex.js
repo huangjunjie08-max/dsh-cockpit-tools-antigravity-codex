@@ -10,9 +10,12 @@ export const CODEX_MODELS = [
     reasoning: {
       efforts: [
         { id: "auto", name: "Auto", description: "Automatically select effort based on task complexity" },
+        { id: "none", name: "None", description: "No reasoning" },
         { id: "low", name: "Low", description: "Faster, concise reasoning" },
         { id: "medium", name: "Medium", description: "Balanced reasoning effort" },
         { id: "high", name: "High", description: "Comprehensive reasoning" },
+        { id: "xhigh", name: "X-High", description: "Extra-deep reasoning" },
+        { id: "max", name: "Max", description: "Maximum reasoning" },
       ],
       defaultEffort: "auto",
     },
@@ -25,9 +28,12 @@ export const CODEX_MODELS = [
     reasoning: {
       efforts: [
         { id: "auto", name: "Auto", description: "Automatically select effort based on task complexity" },
+        { id: "none", name: "None", description: "No reasoning" },
+        { id: "low", name: "Low", description: "Faster, concise reasoning" },
         { id: "medium", name: "Medium", description: "Balanced reasoning" },
         { id: "high", name: "High", description: "Deep reasoning" },
         { id: "xhigh", name: "X-High", description: "Maximum reasoning capacity" },
+        { id: "max", name: "Max", description: "Maximum reasoning" },
       ],
       defaultEffort: "auto",
     },
@@ -40,8 +46,12 @@ export const CODEX_MODELS = [
     reasoning: {
       efforts: [
         { id: "auto", name: "Auto", description: "Automatically select effort based on task complexity" },
+        { id: "none", name: "None", description: "No reasoning" },
         { id: "low", name: "Low", description: "Lightweight, fast reasoning" },
         { id: "medium", name: "Medium", description: "Balanced reasoning" },
+        { id: "high", name: "High", description: "Deep reasoning" },
+        { id: "xhigh", name: "X-High", description: "Extra-deep reasoning" },
+        { id: "max", name: "Max", description: "Maximum reasoning" },
       ],
       defaultEffort: "auto",
     },

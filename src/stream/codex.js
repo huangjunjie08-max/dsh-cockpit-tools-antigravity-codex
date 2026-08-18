@@ -6,7 +6,7 @@ const DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
 
 /**
  * Resolve "auto" reasoning effort for Codex models.
- * OpenAI Codex API only accepts low/medium/high — "auto" must be resolved locally.
+ * "auto" is a UI-only convenience; the API receives a concrete model effort.
  */
 function resolveCodexAutoEffort(modelId, messages = []) {
   const model = CODEX_MODELS.find((item) => item.id === resolveCodexModelId(modelId));
@@ -15,7 +15,7 @@ function resolveCodexAutoEffort(modelId, messages = []) {
     .filter((effort) => effort !== "auto");
   const pick = (preferred) => {
     if (availableEfforts.includes(preferred)) return preferred;
-    for (const effort of ["high", "medium", "low"]) {
+    for (const effort of ["max", "xhigh", "high", "medium", "low", "none"]) {
       if (availableEfforts.includes(effort)) return effort;
     }
     return availableEfforts[0];
@@ -147,9 +147,11 @@ export function buildCodexRequestBody(options) {
   if (model?.reasoning && effort && effort !== "off") {
     body.reasoning = {
       effort,
-      summary: "auto",
     };
-    body.include = ["reasoning.encrypted_content"];
+    if (effort !== "none") {
+      body.reasoning.summary = "auto";
+      body.include = ["reasoning.encrypted_content"];
+    }
   }
 
   if (options.maxTokens) {

@@ -30,8 +30,7 @@
 - **告别 DeepSeek 默认单一档位**：不同模型支持的思考档位不同，本插件在 `resolveModel` 时会向 DSH UI 动态返回该模型专属的合法推理档位：
   - **Gemini 3.7 / 3.6 / 3.5 Flash**：提供 `Low` / `Medium` / `High` 档位。
   - **Claude Sonnet 4.6**：提供 `Low` / `Medium` / `High` 完整 Interleaved Thinking。
-  - **GPT-5.6 Sol**：提供 `Low` / `Medium` / `High` 档位，默认 `Medium`。
-  - **GPT-5.6 Terra**：提供 `Medium` / `High` / `X-High` 深度推理档位，默认 `High`。
+  - **GPT-5.6 Sol / Terra / Luna**：提供 `None` / `Low` / `Medium` / `High` / `X-High` / `Max` 档位，并额外提供插件侧 `Auto` 自动选择，默认 `Auto`。
   - **非思考模型**（如 `gemini-3.1-flash-lite`、`gpt-4o`）：自动隐藏/禁用思考下拉框。
 
 ---
