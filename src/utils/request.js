@@ -10,8 +10,13 @@ function contentText(content) {
 }
 
 export function getLastUserText(messages = []) {
-  const lastUser = [...messages].reverse().find((message) => message?.role === "user");
-  return contentText(lastUser?.content).trim();
+  for (const message of [...messages].reverse()) {
+    if (message?.role !== "user") continue;
+    if (message.source?.kind && message.source.kind !== "user") continue;
+    const text = contentText(message.content).trim();
+    if (text) return text;
+  }
+  return "";
 }
 
 export function getSystemInstruction(system, messages = []) {

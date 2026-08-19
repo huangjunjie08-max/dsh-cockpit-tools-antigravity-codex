@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildAntigravityRequestBody } from "../src/stream/stream.js";
 import { buildCodexRequestBody, resolveCodexAutoEffort } from "../src/stream/codex.js";
-import { filterRequestTools, getRequestToolProfile } from "../src/utils/request.js";
+import { filterRequestTools, getLastUserText, getRequestToolProfile } from "../src/utils/request.js";
 import { ANTIGRAVITY_MODELS, resolveAutoEffort } from "../src/models/antigravity.js";
 import { streamCodex } from "../src/stream/codex.js";
 
@@ -56,6 +56,40 @@ test("all providers hide optional tools during coding turns", () => {
     filterRequestTools(tools, [{ role: "user", content: [{ type: "text", text: "Search the latest docs online." }] }]).map((tool) => tool.name),
     ["pwsh", "web_search"],
   );
+});
+
+test("tool profiles ignore DSH context and preserve intent after tool results", () => {
+  const tools = [
+    { name: "pwsh" },
+    { name: "web_search" },
+    { name: "viking_search" },
+  ];
+  const messages = [
+    {
+      role: "user",
+      source: { kind: "user" },
+      content: [{ type: "text", text: "Search the latest docs online." }],
+    },
+    {
+      role: "user",
+      source: { kind: "plugin", plugin: "@deepseek-ai/dsh-system-prompt", form: "snapshot", sections: [] },
+      content: [{ type: "text", text: "Current runtime context. GitHub is available." }],
+    },
+    {
+      role: "user",
+      source: { kind: "plugin", plugin: "skill-catalog", form: "catalog", entries: [] },
+      content: [{ type: "text", text: "Search and GitHub skills." }],
+    },
+    {
+      role: "user",
+      source: { kind: "tool", callId: "call_1" },
+      content: [{ type: "tool-result", toolCallId: "call_1", content: [{ type: "text", text: "Search result" }] }],
+    },
+  ];
+
+  assert.equal(getLastUserText(messages), "Search the latest docs online.");
+  assert.equal(getRequestToolProfile(tools, messages), "web");
+  assert.deepEqual(filterRequestTools(tools, messages).map((tool) => tool.name), ["pwsh", "web_search"]);
 });
 
 test("Codex isolates cache entries when optional tool profiles change", () => {
