@@ -1,7 +1,8 @@
 import { createDecipheriv } from "node:crypto";
-import { readFileSync, existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { loadCodexCredentials, saveCodexCredentials } from "./codex-oauth.js";
 
 const COCKPIT_DIR = join(homedir(), ".antigravity_cockpit");
 const CODEX_DATA_AUTH = "D:\\apps\\CodexData\\.codex\\auth.json";
@@ -11,7 +12,11 @@ const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_TOKEN_URL = "https://auth.openai.com/oauth/token";
 
 export function loadCockpitCodexAuth() {
-  // 1. Try ~/.antigravity_cockpit/codex_accounts
+  // 1. Prefer the plugin-owned OAuth file so Cockpit Tools is optional.
+  const localAuth = loadCodexCredentials();
+  if (localAuth) return localAuth;
+
+  // 2. Try ~/.antigravity_cockpit/codex_accounts
   if (existsSync(COCKPIT_DIR)) {
     const keyPath = join(COCKPIT_DIR, "secure-account-storage.key");
     const codexAccountsJson = join(COCKPIT_DIR, "codex_accounts.json");
@@ -95,7 +100,7 @@ export function loadCockpitCodexAuth() {
     }
   }
 
-  // 2. Try CodexData/.codex/auth.json
+  // 3. Try CodexData/.codex/auth.json
   if (existsSync(CODEX_DATA_AUTH)) {
     try {
       const data = JSON.parse(readFileSync(CODEX_DATA_AUTH, "utf8"));
@@ -114,7 +119,7 @@ export function loadCockpitCodexAuth() {
     }
   }
 
-  // 3. Try Pi auth.json
+  // 4. Try Pi auth.json
   if (existsSync(PI_AUTH_PATH)) {
     try {
       const data = JSON.parse(readFileSync(PI_AUTH_PATH, "utf8"));
@@ -161,9 +166,20 @@ export async function refreshCodexToken(refreshToken) {
 }
 
 export async function getValidCodexCredentials() {
-  const creds = loadCockpitCodexAuth();
+  let creds = loadCockpitCodexAuth();
   if (!creds || !creds.access) {
-    throw new Error("No OpenAI Codex credentials found from Cockpit Tools or Pi.");
+    throw new Error("No OpenAI Codex credentials found from this plugin, Cockpit Tools, Codex, or Pi.");
   }
+
+  if (creds.expires && Date.now() >= creds.expires - 2 * 60 * 1000 && creds.refresh) {
+    try {
+      const refreshed = await refreshCodexToken(creds.refresh);
+      creds = { ...creds, ...refreshed };
+      if (creds.source === "dsh-codex-auth") saveCodexCredentials(creds);
+    } catch (error) {
+      if (!creds.access) throw error;
+    }
+  }
+
   return creds;
 }

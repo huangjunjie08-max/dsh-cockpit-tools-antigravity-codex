@@ -11,11 +11,14 @@ import {
 } from "./models/codex.js";
 import { loginAntigravity, getValidCredentials, loadStoredCredentials } from "./auth/oauth.js";
 import { loadCockpitCodexAuth, getValidCodexCredentials } from "./auth/cockpit-codex.js";
+import { loginCodex } from "./auth/codex-oauth.js";
+import { AntigravityOAuthService, readOAuthStatus } from "./oauth-service.js";
 
 export const name = "dsh-plugin-antigravity";
 export const inject = ["llm"];
 
 export function apply(ctx, config = {}) {
+  new AntigravityOAuthService(ctx);
   const adapter = new AntigravityAndCodexLlmAdapter();
   const routes = [ANTIGRAVITY_PROVIDER_ID, CODEX_PROVIDER_ID];
 
@@ -61,8 +64,11 @@ export {
   ANTIGRAVITY_PROVIDER_ID,
   CODEX_PROVIDER_ID,
   loginAntigravity,
+  loginCodex,
   getValidCredentials,
   loadStoredCredentials,
   loadCockpitCodexAuth,
   getValidCodexCredentials,
+  AntigravityOAuthService,
+  readOAuthStatus,
 };

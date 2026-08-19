@@ -1,0 +1,34 @@
+import { z } from "zod";
+
+const authStateSchema = z.object({
+  loggedIn: z.boolean(),
+  source: z.string(),
+});
+const oauthStatusSchema = z.object({
+  antigravity: authStateSchema,
+  codex: authStateSchema,
+});
+
+const descriptors = ["status", "loginAntigravity", "loginCodex"].map((method) => ({
+  id: `dsh-plugin-antigravity#antigravityOAuth/${method}`,
+  service: "antigravityOAuth",
+  namespace: "antigravityOAuth",
+  method,
+  invocation: { kind: "direct" },
+  parameters: [],
+  result: {
+    mode: "strict",
+    typeSymbol: "dsh-plugin-antigravity/types#OAuthStatus",
+    schema: oauthStatusSchema,
+  },
+}));
+
+export const TYPERT = {
+  package: "dsh-plugin-antigravity",
+  face: "host",
+  schemas: [],
+  invocations: descriptors,
+  model: { services: [], events: [], objects: [] },
+};
+
+export default TYPERT;

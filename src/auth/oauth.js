@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { defaultProjectId, loadCodeAssist } from "../client/client.js";
 import { escapeHtml, antigravityEnv } from "../utils/util.js";
 import { resolveCallbackHost, redactSecrets, safeError } from "../utils/security.js";
-import { loadCockpitAntigravityAuth, hasCockpitTools } from "./cockpit.js";
+import { loadCockpitAntigravityAuth } from "./cockpit.js";
 
 export const REDIRECT_URI = "http://localhost:51121/oauth-callback";
 export const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -259,13 +259,21 @@ const DSH_AUTH_PATH = join(homedir(), ".dsh", "antigravity-auth.json");
 const PI_AUTH_PATH = join(homedir(), ".pi", "agent", "auth.json");
 
 export function loadStoredCredentials() {
-  // 1. Priority 1: Cockpit Tools OAuth integration (~/.antigravity_cockpit)
-  const cockpitAuth = loadCockpitAntigravityAuth();
-  if (cockpitAuth && (cockpitAuth.access || cockpitAuth.refresh)) {
-    return cockpitAuth;
+  // 1. Prefer the plugin-owned OAuth file so Cockpit Tools is optional.
+  if (existsSync(DSH_AUTH_PATH)) {
+    try {
+      const raw = JSON.parse(readFileSync(DSH_AUTH_PATH, "utf8"));
+      if (raw.access || raw.refresh) return { source: "dsh-auth-file", ...raw };
+    } catch {
+      // ignore
+    }
   }
 
-  // 2. Priority 2: Auto-detect ~/.pi/agent/auth.json (Pi Antigravity login)
+  // 2. Cockpit Tools OAuth integration (~/.antigravity_cockpit)
+  const cockpitAuth = loadCockpitAntigravityAuth();
+  if (cockpitAuth && (cockpitAuth.access || cockpitAuth.refresh)) return cockpitAuth;
+
+  // 3. Auto-detect ~/.pi/agent/auth.json (Pi Antigravity login)
   if (existsSync(PI_AUTH_PATH)) {
     try {
       const piAuth = JSON.parse(readFileSync(PI_AUTH_PATH, "utf8"));
@@ -280,22 +288,7 @@ export function loadStoredCredentials() {
     }
   }
 
-  // 3. Priority 3: ~/.dsh/antigravity-auth.json
-  if (existsSync(DSH_AUTH_PATH)) {
-    try {
-      const raw = JSON.parse(readFileSync(DSH_AUTH_PATH, "utf8"));
-      if (raw.access || raw.refresh) {
-        return {
-          source: "dsh-auth-file",
-          ...raw,
-        };
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  // 4. Priority 4: Environment variables
+  // 4. Environment variables
   const envToken = process.env.ANTIGRAVITY_TOKEN || process.env.ANTIGRAVITY_ACCESS_TOKEN;
   const envRefresh = process.env.ANTIGRAVITY_REFRESH_TOKEN;
   const envProject = process.env.ANTIGRAVITY_PROJECT_ID;

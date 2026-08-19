@@ -9,6 +9,9 @@
   },
   "exports": {
     ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./typert": "./src/typert.host.js",
+    "./remote": "./src/typert.remote.js",
     "./*": "./*",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
@@ -21,6 +24,10 @@
     "package.json"
   ],
   "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": ["slots", "remote"]
+    },
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
@@ -36,6 +43,9 @@
     "@deepseek-ai/dsh-llm": {
       "optional": true
     }
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
   },
   "keywords": [
     "deepseek",
