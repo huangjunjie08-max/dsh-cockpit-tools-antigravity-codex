@@ -22,6 +22,7 @@ import {
 import { redactSecrets, safeError } from "../utils/security.js";
 import { antigravityEnv, isRecord, nowRequestId, sanitizeText } from "../utils/util.js";
 import { filterRequestTools, getLastUserText, getSystemInstruction } from "../utils/request.js";
+import { visibleFailureChunks } from "../utils/failure.js";
 
 const ANTIGRAVITY_SYSTEM_INSTRUCTION =
   "You are Antigravity, a powerful agentic AI coding assistant designed by Google DeepMind. " +
@@ -379,6 +380,9 @@ export function buildAntigravityRequestBody(options, projectId, runtimeModel) {
 
 export function friendlyAntigravityError(status, text) {
   const msg = redactSecrets(jsonOrTextError(text)).slice(0, 500);
+  if (!msg && !status) {
+    return "Antigravity request failed: no response from Google. Check the network or proxy settings.";
+  }
   if (status === 400) {
     return `Antigravity rejected request: ${msg}`;
   }
@@ -489,6 +493,7 @@ export async function* streamAntigravity(options, credentials) {
 
   if (!response || !response.ok) {
     const errorMsg = friendlyAntigravityError(response?.status, lastText);
+    yield* visibleFailureChunks(errorMsg);
     yield {
       type: "finish",
       reason: {
@@ -690,6 +695,26 @@ export async function* streamAntigravity(options, credentials) {
   } catch (err) {
     if (!hasEmittedFinish) {
       const isAborted = options.signal?.aborted;
+      if (!isAborted) {
+        if (currentBlockType === "text") {
+          yield {
+            type: "block-end",
+            index: currentBlockIndex,
+            block: { type: "text", text: currentText },
+          };
+          currentBlockIndex++;
+          currentBlockType = null;
+        } else if (currentBlockType === "reasoning") {
+          yield {
+            type: "block-end",
+            index: currentBlockIndex,
+            block: { type: "reasoning", text: currentReasoning },
+          };
+          currentBlockIndex++;
+          currentBlockType = null;
+        }
+        yield* visibleFailureChunks(safeError(err), currentBlockIndex);
+      }
       yield {
         type: "finish",
         reason: isAborted

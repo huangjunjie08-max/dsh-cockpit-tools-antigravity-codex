@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { sanitizeText, isRecord, nowRequestId } from "../utils/util.js";
 import { safeError, redactSecrets } from "../utils/security.js";
+import { visibleFailureChunks } from "../utils/failure.js";
 import {
   filterRequestTools,
   getLastUserText,
@@ -308,6 +309,7 @@ export async function* streamCodex(options, credentials) {
       yield { type: "finish", reason: { kind: "aborted" } };
       return;
     }
+    yield* visibleFailureChunks(safeError(err));
     yield {
       type: "finish",
       reason: {
@@ -327,6 +329,7 @@ export async function* streamCodex(options, credentials) {
       else if (parsed.detail) msg = parsed.detail;
     } catch {}
 
+    yield* visibleFailureChunks(`OpenAI Codex error (${response.status}): ${redactSecrets(msg)}`);
     yield {
       type: "finish",
       reason: {
@@ -526,6 +529,26 @@ export async function* streamCodex(options, credentials) {
   } catch (err) {
     if (!hasEmittedFinish) {
       const isAborted = options.signal?.aborted;
+      if (!isAborted) {
+        if (currentBlockType === "text") {
+          yield {
+            type: "block-end",
+            index: currentBlockIndex,
+            block: { type: "text", text: currentText },
+          };
+          currentBlockIndex++;
+          currentBlockType = null;
+        } else if (currentBlockType === "reasoning") {
+          yield {
+            type: "block-end",
+            index: currentBlockIndex,
+            block: { type: "reasoning", text: currentReasoning },
+          };
+          currentBlockIndex++;
+          currentBlockType = null;
+        }
+        yield* visibleFailureChunks(safeError(err), currentBlockIndex);
+      }
       yield {
         type: "finish",
         reason: isAborted

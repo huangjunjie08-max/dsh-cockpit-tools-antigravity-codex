@@ -13,6 +13,7 @@ import { getValidCredentials } from "./auth/oauth.js";
 import { getValidCodexCredentials } from "./auth/cockpit-codex.js";
 import { streamAntigravity } from "./stream/stream.js";
 import { streamCodex } from "./stream/codex.js";
+import { visibleFailureChunks } from "./utils/failure.js";
 
 let BaseLlmAdapter = class {
   providerInfo(provider) {
@@ -137,12 +138,14 @@ export class AntigravityAndCodexLlmAdapter extends BaseLlmAdapter {
       try {
         credentials = await getValidCodexCredentials();
       } catch (err) {
+        const message = `OpenAI Codex credentials missing: ${err.message}. Please login in Cockpit Tools.`;
+        yield* visibleFailureChunks(message);
         yield {
           type: "finish",
           reason: {
             kind: "error",
             failure: {
-              message: `OpenAI Codex credentials missing: ${err.message}. Please login in Cockpit Tools.`,
+              message,
               code: "NO_CODEX_CREDENTIALS",
             },
           },
@@ -159,12 +162,14 @@ export class AntigravityAndCodexLlmAdapter extends BaseLlmAdapter {
     try {
       credentials = await getValidCredentials();
     } catch (err) {
+      const message = `Antigravity credentials missing: ${err.message}. Please login via 'node bin/login.js' or Cockpit Tools.`;
+      yield* visibleFailureChunks(message);
       yield {
         type: "finish",
         reason: {
           kind: "error",
           failure: {
-            message: `Antigravity credentials missing: ${err.message}. Please login via 'node bin/login.js' or Cockpit Tools.`,
+            message,
             code: "NO_CREDENTIALS",
           },
         },

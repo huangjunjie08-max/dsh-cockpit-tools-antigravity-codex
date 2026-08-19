@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildAntigravityRequestBody } from "../src/stream/stream.js";
+import {
+  buildAntigravityRequestBody,
+  friendlyAntigravityError,
+  streamAntigravity,
+} from "../src/stream/stream.js";
 import { buildCodexRequestBody, resolveCodexAutoEffort } from "../src/stream/codex.js";
 import { filterRequestTools, getLastUserText, getRequestToolProfile } from "../src/utils/request.js";
 import { ANTIGRAVITY_MODELS, resolveAutoEffort } from "../src/models/antigravity.js";
 import { streamCodex } from "../src/stream/codex.js";
+import { visibleFailureChunks } from "../src/utils/failure.js";
 
 const messages = [
   { role: "system", content: [{ type: "text", text: "Follow repository rules." }] },
@@ -240,4 +245,56 @@ test("Codex uses previous response continuation when the history prefix is stabl
     if (originalContinuation === undefined) delete process.env.DSH_CODEX_CONTINUATION;
     else process.env.DSH_CODEX_CONTINUATION = originalContinuation;
   }
+});
+
+test("provider failures emit visible chat text without exposing secrets", () => {
+  const chunks = [...visibleFailureChunks("401 Bearer secret-token")];
+
+  assert.equal(chunks[0].type, "block-start");
+  assert.equal(chunks[1].type, "text-delta");
+  assert.match(chunks[1].text, /模型请求失败/);
+  assert.doesNotMatch(chunks[1].text, /secret-token/);
+  assert.equal(chunks[2].block.type, "text");
+  assert.equal(chunks[2].block.text, chunks[1].text);
+});
+
+test("Gemini API failures emit visible chat text before the terminal error", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalBaseUrl = process.env.ANTIGRAVITY_BASE_URL;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return {
+      ok: false,
+      status: 401,
+      text: async () => JSON.stringify({ error: { message: "unauthorized" } }),
+    };
+  };
+  process.env.ANTIGRAVITY_BASE_URL = "https://test.invalid";
+
+  try {
+    const events = [];
+    for await (const event of streamAntigravity(
+      { model: "gemini-3.1-flash-lite", messages: [] },
+      { access: "test", projectId: "project" },
+    )) {
+      events.push(event);
+    }
+
+    const visible = events.find((event) => event.type === "text-delta");
+    const finish = events.at(-1);
+    assert.ok(calls > 0);
+    assert.match(visible.text, /模型请求失败/);
+    assert.match(visible.text, /authentication failed/);
+    assert.equal(finish.type, "finish");
+    assert.equal(finish.reason.kind, "error");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalBaseUrl === undefined) delete process.env.ANTIGRAVITY_BASE_URL;
+    else process.env.ANTIGRAVITY_BASE_URL = originalBaseUrl;
+  }
+});
+
+test("Gemini network failures have a useful visible fallback", () => {
+  assert.match(friendlyAntigravityError(undefined, ""), /no response from Google/);
 });
