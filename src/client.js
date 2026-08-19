@@ -121,7 +121,7 @@ window.__ModuleLoader__.load({
     const inject = ["slots", "remote"];
     async function apply(ctx) {
       const disposeRemote = await ctx.remote.$mount(TYPERT_REMOTE);
-      OAuthSettingsSection.api = ctx.remote.antigravityOAuth;
+      OAuthSettingsSection.api = ctx.get("remote.antigravityOAuth");
       const disposeSection = ctx.slots.inject("settings.section", () => ctx.slots.register({
         name: "settings.section",
         id: "oauth",
