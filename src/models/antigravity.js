@@ -29,22 +29,14 @@ export const ANTIGRAVITY_ROUTING = {
   "claude-sonnet-4-6": {
     off: "claude-sonnet-4-6",
     routing: {
-      minimal: "claude-sonnet-4-6",
-      low: "claude-sonnet-4-6",
-      medium: "claude-sonnet-4-6",
       high: "claude-sonnet-4-6",
-      xhigh: "claude-sonnet-4-6",
     },
     defaultRequestId: "claude-sonnet-4-6",
   },
   "claude-3-7-sonnet": {
     off: "claude-sonnet-4-6",
     routing: {
-      minimal: "claude-sonnet-4-6",
-      low: "claude-sonnet-4-6",
-      medium: "claude-sonnet-4-6",
       high: "claude-sonnet-4-6",
-      xhigh: "claude-sonnet-4-6",
     },
     defaultRequestId: "claude-sonnet-4-6",
   },
@@ -208,8 +200,6 @@ export const ANTIGRAVITY_MODELS = [
     reasoning: {
       efforts: [
         { id: "auto", name: "Auto", description: "Automatically select effort based on task complexity" },
-        { id: "low", name: "Low", description: "Fast reasoning" },
-        { id: "medium", name: "Medium", description: "Balanced reasoning" },
         { id: "high", name: "High", description: "Full thinking mode" },
       ],
       defaultEffort: "auto",

@@ -13,6 +13,7 @@ import {
   GeminiToolCallingMode,
 } from "../types/enums.js";
 import {
+  ANTIGRAVITY_PROVIDER_ID,
   getAntigravityRequestModelId,
   getFallbackRuntimeModel,
   getMaxOutputTokens,
@@ -279,7 +280,12 @@ export function convertDshMessagesToGemini(messages, modelId, runtimeModel) {
         if (block.type === "text" && block.text?.trim()) {
           parts.push({ text: sanitizeText(block.text) });
         } else if (block.type === "reasoning" && block.text?.trim()) {
-          parts.push({ thought: true, text: sanitizeText(block.text) });
+          if (
+            msg.source?.provider === ANTIGRAVITY_PROVIDER_ID &&
+            msg.source?.model === modelId
+          ) {
+            parts.push({ thought: true, text: sanitizeText(block.text) });
+          }
         } else if (block.type === "tool-call") {
           let argsObj = {};
           try {

@@ -3,7 +3,7 @@ import test from "node:test";
 import { buildAntigravityRequestBody } from "../src/stream/stream.js";
 import { buildCodexRequestBody, resolveCodexAutoEffort } from "../src/stream/codex.js";
 import { filterRequestTools } from "../src/utils/request.js";
-import { resolveAutoEffort } from "../src/models/antigravity.js";
+import { ANTIGRAVITY_MODELS, resolveAutoEffort } from "../src/models/antigravity.js";
 import { streamCodex } from "../src/stream/codex.js";
 
 const messages = [
@@ -67,6 +67,43 @@ test("Antigravity keeps DSH system instructions in systemInstruction", () => {
   const text = body.request.systemInstruction.parts.map((part) => part.text).join("\n");
   assert.match(text, /Keep changes minimal/);
   assert.equal(body.request.contents.some((content) => content.parts?.some((part) => part.text?.includes("System Instruction"))), false);
+});
+
+test("Antigravity drops reasoning from a different model after model switching", () => {
+  const messages = [
+    { role: "user", content: [{ type: "text", text: "Analyze this." }] },
+    {
+      role: "assistant",
+      source: { kind: "model", provider: "antigravity", model: "gemini-3.6-flash" },
+      content: [
+        { type: "reasoning", text: "Old Gemini reasoning" },
+        { type: "text", text: "Old answer" },
+      ],
+    },
+    { role: "user", content: [{ type: "text", text: "Continue." }] },
+  ];
+
+  const switched = buildAntigravityRequestBody(
+    { model: "claude-sonnet-4-6", messages },
+    "project",
+    "claude-sonnet-4-6",
+  );
+  const switchedParts = switched.request.contents.flatMap((content) => content.parts || []);
+  assert.equal(switchedParts.some((part) => part.thought === true), false);
+  assert.equal(switchedParts.some((part) => part.text === "Old answer"), true);
+
+  const sameModel = buildAntigravityRequestBody(
+    { model: "gemini-3.6-flash", messages },
+    "project",
+    "gemini-3.6-flash",
+  );
+  const sameModelParts = sameModel.request.contents.flatMap((content) => content.parts || []);
+  assert.equal(sameModelParts.some((part) => part.thought === true && part.text === "Old Gemini reasoning"), true);
+});
+
+test("Claude Sonnet exposes only Auto and High thinking levels", () => {
+  const sonnet = ANTIGRAVITY_MODELS.find((model) => model.id === "claude-sonnet-4-6");
+  assert.deepEqual(sonnet.reasoning.efforts.map((effort) => effort.id), ["auto", "high"]);
 });
 
 test("Codex uses previous response continuation when the history prefix is stable", async () => {
