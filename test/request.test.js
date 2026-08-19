@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildAntigravityRequestBody,
+  convertDshMessagesToGemini,
   friendlyAntigravityError,
   streamAntigravity,
 } from "../src/stream/stream.js";
@@ -168,6 +169,131 @@ test("Antigravity drops reasoning from a different model after model switching",
   );
   const sameModelParts = sameModel.request.contents.flatMap((content) => content.parts || []);
   assert.equal(sameModelParts.some((part) => part.thought === true && part.text === "Old Gemini reasoning"), true);
+});
+
+test("Gemini preserves function-call thought signatures across tool turns", () => {
+  const contents = convertDshMessagesToGemini(
+    [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            id: "call_1",
+            name: "default_api:skill",
+            arguments: '{"name":"search"}',
+            thoughtSignature: "signature-A",
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call_1",
+            name: "default_api:skill",
+            content: [{ type: "text", text: "done" }],
+          },
+        ],
+      },
+    ],
+    "gemini-3.7-flash",
+    "gemini-3.7-flash-tiered",
+  );
+
+  assert.equal(contents[0].role, "model");
+  assert.equal(contents[0].parts[0].thoughtSignature, "signature-A");
+  assert.equal(contents[0].parts[0].functionCall.name, "default_api:skill");
+  assert.equal(contents[1].parts[0].functionResponse.name, "default_api:skill");
+});
+
+test("Gemini adds the documented legacy signature only for Gemini targets", () => {
+  const contents = convertDshMessagesToGemini(
+    [
+      {
+        role: "assistant",
+        source: { kind: "model", provider: "antigravity", model: "claude-sonnet-4-6" },
+        content: [{ type: "tool-call", id: "call_1", name: "skill", arguments: "{}" }],
+      },
+    ],
+    "gemini-3.7-flash",
+    "gemini-3.7-flash-tiered",
+  );
+
+  assert.equal(contents[0].parts[0].thoughtSignature, "skip_thought_signature_validator");
+
+  const claudeContents = convertDshMessagesToGemini(
+    [
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", id: "call_1", name: "skill", arguments: "{}" }],
+      },
+    ],
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-6",
+  );
+  assert.equal("thoughtSignature" in claudeContents[0].parts[0], false);
+});
+
+test("Gemini parses signed function calls as tool calls", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalBaseUrl = process.env.ANTIGRAVITY_BASE_URL;
+  let calls = 0;
+  globalThis.fetch = async (_url, init) => {
+    calls++;
+    if (calls === 1) {
+      return { ok: true, json: async () => ({ models: { "gemini-3.7-flash-tiered": {} } }) };
+    }
+
+    const payload = [
+      `data: ${JSON.stringify({
+        response: {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    functionCall: { name: "default_api:skill", args: { name: "search" } },
+                    thoughtSignature: "signature-A",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      })}`,
+      "",
+    ].join("\n");
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(payload));
+        controller.close();
+      },
+    });
+    return { ok: true, status: 200, body };
+  };
+  process.env.ANTIGRAVITY_BASE_URL = "https://signature-test.invalid";
+
+  try {
+    const events = [];
+    for await (const event of streamAntigravity(
+      { model: "gemini-3.7-flash", messages: [] },
+      { access: "signature-test", projectId: "signature-project" },
+    )) {
+      events.push(event);
+    }
+
+    const toolCall = events.find((event) => event.type === "block-end" && event.block?.type === "tool-call");
+    assert.equal(calls, 2);
+    assert.equal(toolCall.block.name, "default_api:skill");
+    assert.equal(toolCall.block.thoughtSignature, "signature-A");
+    assert.equal(events.at(-1).reason.kind, "tool-calls");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalBaseUrl === undefined) delete process.env.ANTIGRAVITY_BASE_URL;
+    else process.env.ANTIGRAVITY_BASE_URL = originalBaseUrl;
+  }
 });
 
 test("Claude Sonnet exposes only Auto and High thinking levels", () => {

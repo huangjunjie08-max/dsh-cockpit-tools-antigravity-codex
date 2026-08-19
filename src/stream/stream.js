@@ -297,6 +297,10 @@ export function convertDshMessagesToGemini(messages, modelId, runtimeModel) {
           } catch {
             argsObj = {};
           }
+          const thoughtSignature =
+            block.thoughtSignature ||
+            block.thought_signature ||
+            (modelId?.startsWith("gemini-") ? "skip_thought_signature_validator" : undefined);
           parts.push({
             functionCall: {
               name: block.name,
@@ -305,6 +309,7 @@ export function convertDshMessagesToGemini(messages, modelId, runtimeModel) {
                 ? { id: sanitizeToolCallId(block.id || "", block.name) }
                 : {}),
             },
+            ...(thoughtSignature ? { thoughtSignature } : {}),
           });
         }
       }
@@ -574,7 +579,7 @@ export async function* streamAntigravity(options, credentials) {
         const parts = candidate?.content?.parts || [];
         for (const part of parts) {
           // 1. Thinking / Reasoning
-          if (part.thought === true || part.thoughtSignature) {
+          if (!part.functionCall && part.thought === true) {
             const thoughtText = part.text || "";
             if (thoughtText) {
               if (currentBlockType !== "reasoning") {
@@ -616,6 +621,11 @@ export async function* streamAntigravity(options, credentials) {
             toolCallName = part.functionCall.name || "tool";
             toolCallId = part.functionCall.id || sanitizeToolCallId("", toolCallName);
             const argsStr = JSON.stringify(part.functionCall.args || {});
+            const thoughtSignature =
+              part.thoughtSignature ||
+              part.thought_signature ||
+              part.functionCall.thoughtSignature ||
+              part.functionCall.thought_signature;
             toolCallArgs = argsStr;
             finishReason = "tool-calls";
 
@@ -635,6 +645,7 @@ export async function* streamAntigravity(options, credentials) {
                 id: toolCallId,
                 name: toolCallName,
                 arguments: argsStr,
+                ...(thoughtSignature ? { thoughtSignature } : {}),
               },
             };
             currentBlockIndex++;
