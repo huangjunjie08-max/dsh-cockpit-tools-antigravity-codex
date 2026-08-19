@@ -126,7 +126,7 @@ window.__ModuleLoader__.load({
         name: "settings.section",
         id: "oauth",
         order: 25,
-        label: () => "oauth",
+        label: () => "OAuth",
       }, OAuthSettingsSection));
       return async () => {
         disposeSection();
