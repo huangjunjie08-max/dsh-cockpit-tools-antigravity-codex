@@ -41,22 +41,33 @@ function wantsMemory(text) {
   return /\b(memory|remember|recall|forget|decision|记忆|记住|回忆|忘记|历史决策)\b/i.test(text);
 }
 
+export function getRequestToolProfile(tools, messages = []) {
+  if (!Array.isArray(tools) || tools.length === 0) return "none";
+
+  const mode = (process.env.DSH_ANTIGRAVITY_TOOL_MODE || "coding").trim().toLowerCase();
+  if (mode === "all") return "all";
+
+  const lastText = getLastUserText(messages);
+  const profiles = [];
+  if (mode === "research" || wantsWeb(lastText)) profiles.push("web");
+  if (mode === "memory" || wantsMemory(lastText)) profiles.push("memory");
+  if (mode === "vision" || hasImage(messages)) profiles.push("vision");
+  return profiles.length > 0 ? profiles.join("+") : "coding";
+}
+
 export function filterRequestTools(tools, messages = []) {
   if (!Array.isArray(tools) || tools.length === 0) return undefined;
 
   const mode = (process.env.DSH_ANTIGRAVITY_TOOL_MODE || "coding").trim().toLowerCase();
   if (mode === "all") return tools;
 
-  const lastText = getLastUserText(messages);
-  const allowWeb = mode === "research" || wantsWeb(lastText);
-  const allowMemory = mode === "memory" || wantsMemory(lastText);
-  const allowImage = mode === "vision" || hasImage(messages);
+  const profile = new Set(getRequestToolProfile(tools, messages).split("+"));
 
   return tools.filter((tool) => {
     const name = String(tool?.name || "").toLowerCase();
-    if (name.startsWith("viking_") || name.startsWith("hindsight_")) return allowMemory;
-    if (WEB_TOOLS.has(name)) return allowWeb;
-    if (name === "modlens_read_image") return allowImage;
+    if (name.startsWith("viking_") || name.startsWith("hindsight_")) return profile.has("memory");
+    if (WEB_TOOLS.has(name)) return profile.has("web");
+    if (name === "modlens_read_image") return profile.has("vision");
     return true;
   });
 }

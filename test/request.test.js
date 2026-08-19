@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildAntigravityRequestBody } from "../src/stream/stream.js";
 import { buildCodexRequestBody, resolveCodexAutoEffort } from "../src/stream/codex.js";
-import { filterRequestTools } from "../src/utils/request.js";
+import { filterRequestTools, getRequestToolProfile } from "../src/utils/request.js";
 import { ANTIGRAVITY_MODELS, resolveAutoEffort } from "../src/models/antigravity.js";
 import { streamCodex } from "../src/stream/codex.js";
 
@@ -58,6 +58,36 @@ test("all providers hide optional tools during coding turns", () => {
   );
 });
 
+test("Codex isolates cache entries when optional tool profiles change", () => {
+  const tools = [
+    { name: "pwsh" },
+    { name: "web_search" },
+  ];
+  const codingMessages = [{ role: "user", content: [{ type: "text", text: "Fix the bug." }] }];
+  const researchMessages = [{ role: "user", content: [{ type: "text", text: "Search the latest docs online." }] }];
+
+  assert.equal(getRequestToolProfile(tools, codingMessages), "coding");
+  assert.equal(getRequestToolProfile(tools, researchMessages), "web");
+
+  const coding = buildCodexRequestBody({ model: "gpt-5.6-luna", sessionId: "cache-test", messages: codingMessages, tools });
+  const research = buildCodexRequestBody({ model: "gpt-5.6-luna", sessionId: "cache-test", messages: researchMessages, tools });
+  assert.equal(coding.prompt_cache_key, "dsh-codex:gpt-5.6-luna:cache-test");
+  assert.notEqual(coding.prompt_cache_key, research.prompt_cache_key);
+  assert.equal(coding.prompt_cache_key.length <= 64, true);
+  assert.equal(research.prompt_cache_key.length <= 64, true);
+});
+
+test("Codex compacts long cache keys without changing their session scope", () => {
+  const body = buildCodexRequestBody({
+    model: "gpt-5.6-luna",
+    sessionId: "session-".repeat(30),
+    messages,
+  });
+
+  assert.equal(body.prompt_cache_key.length, 64);
+  assert.equal(body.prompt_cache_key.startsWith("dsh:"), true);
+});
+
 test("Antigravity keeps DSH system instructions in systemInstruction", () => {
   const body = buildAntigravityRequestBody(
     { model: "gemini-3.7-flash", reasoningEffort: "medium", system: "Keep changes minimal.", messages },
@@ -110,9 +140,11 @@ test("Codex uses previous response continuation when the history prefix is stabl
   const originalFetch = globalThis.fetch;
   const originalContinuation = process.env.DSH_CODEX_CONTINUATION;
   const requests = [];
+  const requestHeaders = [];
   let call = 0;
   globalThis.fetch = async (_url, init) => {
     requests.push(JSON.parse(init.body));
+    requestHeaders.push(init.headers);
     call += 1;
     const responseId = `resp_${call}`;
     const payload = [
@@ -162,6 +194,9 @@ test("Codex uses previous response continuation when the history prefix is stabl
     }, { access: "test" })) {}
 
     assert.equal(requests.length, 2);
+    assert.equal(requestHeaders[0]["OpenAI-Beta"], "responses=experimental");
+    assert.equal(requestHeaders[0]["session-id"], "continuation-test");
+    assert.notEqual(requestHeaders[0]["x-client-request-id"], requestHeaders[1]["x-client-request-id"]);
     assert.equal(requests[1].previous_response_id, "resp_1");
     assert.deepEqual(requests[1].input, [
       { role: "user", content: [{ type: "input_text", text: "next" }] },

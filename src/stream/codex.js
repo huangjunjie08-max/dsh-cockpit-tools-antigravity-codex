@@ -1,9 +1,31 @@
+import { createHash } from "node:crypto";
 import { sanitizeText, isRecord, nowRequestId } from "../utils/util.js";
 import { safeError, redactSecrets } from "../utils/security.js";
-import { filterRequestTools, getLastUserText, getSystemInstruction } from "../utils/request.js";
+import {
+  filterRequestTools,
+  getLastUserText,
+  getRequestToolProfile,
+  getSystemInstruction,
+} from "../utils/request.js";
 import { CODEX_MODELS, resolveCodexModelId } from "../models/codex.js";
 
 const DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
+const CODEX_CACHE_KEY_MAX_LENGTH = 64;
+
+function compactCacheKey(value) {
+  const chars = Array.from(value);
+  if (chars.length <= CODEX_CACHE_KEY_MAX_LENGTH) return value;
+  return `dsh:${createHash("sha256").update(value).digest("hex").slice(0, 60)}`;
+}
+
+function buildCodexPromptCacheKey(modelId, sessionId, toolProfile) {
+  if (!sessionId) return undefined;
+  const raw =
+    toolProfile === "coding"
+      ? `dsh-codex:${modelId}:${sessionId}`
+      : `dsh-codex:${modelId}:${toolProfile}:${sessionId}`;
+  return compactCacheKey(raw);
+}
 
 /**
  * Resolve "auto" reasoning effort for Codex models.
@@ -195,6 +217,10 @@ export function buildCodexRequestBody(options) {
   const model = CODEX_MODELS.find((item) => item.id === modelId);
   const sessionId = typeof options.sessionId === "string" ? options.sessionId.trim() : "";
   const instructions = getSystemInstruction(options.system, options.messages || []);
+  const filteredTools = filterRequestTools(options.tools, options.messages || []);
+  const tools = convertDshToolsToCodex(filteredTools);
+  const toolProfile = getRequestToolProfile(options.tools, options.messages || []);
+  const promptCacheKey = buildCodexPromptCacheKey(modelId, sessionId, toolProfile);
 
   // Resolve "auto" to a concrete effort — OpenAI API doesn't accept "auto"
   const rawEffort = options.reasoningEffort || "auto";
@@ -212,7 +238,7 @@ export function buildCodexRequestBody(options) {
     ...(modelId.startsWith("gpt-5.6-")
       ? { text: { verbosity: process.env.DSH_CODEX_TEXT_VERBOSITY || "low" } }
       : {}),
-    ...(sessionId ? { prompt_cache_key: `dsh-codex:${modelId}:${sessionId}` } : {}),
+    ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
   };
 
   if (model?.reasoning && effort && effort !== "off") {
@@ -230,7 +256,6 @@ export function buildCodexRequestBody(options) {
     body.temperature = options.temperature;
   }
 
-  const tools = convertDshToolsToCodex(filterRequestTools(options.tools, options.messages || []));
   if (tools) {
     body.tools = tools;
   }
@@ -250,8 +275,15 @@ export async function* streamCodex(options, credentials) {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
     Accept: "text/event-stream",
+    "OpenAI-Beta": "responses=experimental",
     "User-Agent": "codex-cli/1.0",
     ...(credentials.accountId ? { "chatgpt-account-id": credentials.accountId } : {}),
+    ...(sessionId && body.prompt_cache_key
+      ? {
+          "session-id": compactCacheKey(sessionId),
+          "x-client-request-id": nowRequestId(),
+        }
+      : {}),
   };
 
   const endpoint = process.env.CODEX_BASE_URL || DEFAULT_CODEX_URL;
@@ -460,7 +492,7 @@ export async function* streamCodex(options, credentials) {
             yield {
               type: "usage",
               usage: {
-                inputTokens: inputTokens - cacheReadTokens - cacheWriteTokens,
+                inputTokens: Math.max(0, inputTokens - cacheReadTokens - cacheWriteTokens),
                 outputTokens,
                 cacheReadTokens,
                 cacheWriteTokens,
