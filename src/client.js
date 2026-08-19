@@ -4,10 +4,19 @@ window.__ModuleLoader__.load({
     const module = { exports: {} };
     const exports = module.exports;
     const React = require("react");
-    const { z } = require("zod");
 
-    const authStateSchema = z.object({ loggedIn: z.boolean(), source: z.string() });
-    const oauthStatusSchema = z.object({ antigravity: authStateSchema, codex: authStateSchema });
+    const oauthStatusSchema = {
+      parse(value) {
+        if (!value || typeof value !== "object") throw new TypeError("OAuth status must be an object");
+        for (const provider of ["antigravity", "codex"]) {
+          const state = value[provider];
+          if (!state || typeof state.loggedIn !== "boolean" || typeof state.source !== "string") {
+            throw new TypeError(`OAuth status for ${provider} is invalid`);
+          }
+        }
+        return value;
+      },
+    };
     const TYPERT_REMOTE = {
       package: "dsh-plugin-antigravity",
       descriptors: ["status", "loginAntigravity", "loginCodex"].map((method) => ({
