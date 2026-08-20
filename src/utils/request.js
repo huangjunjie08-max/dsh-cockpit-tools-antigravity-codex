@@ -35,7 +35,8 @@ function contentText(content) {
 }
 
 export function getLastUserText(messages = []) {
-  for (const message of [...messages].reverse()) {
+  const list = Array.isArray(messages) ? messages : [];
+  for (const message of [...list].reverse()) {
     if (message?.role !== "user") continue;
     if (message.source?.kind && message.source.kind !== "user") continue;
     const text = contentText(message.content).trim();
@@ -46,7 +47,8 @@ export function getLastUserText(messages = []) {
 
 export function getSystemInstruction(system, messages = []) {
   const parts = [normalizePromptText(contentText(system))];
-  for (const message of messages) {
+  const list = Array.isArray(messages) ? messages : [];
+  for (const message of list) {
     if (message?.role === "system") {
       const text = normalizePromptText(contentText(message.content));
       if (text) parts.push(text);
@@ -56,7 +58,8 @@ export function getSystemInstruction(system, messages = []) {
 }
 
 function hasImage(messages = []) {
-  return messages.some((message) =>
+  const list = Array.isArray(messages) ? messages : [];
+  return list.some((message) =>
     (message?.content || []).some((block) => block?.type === "image"),
   );
 }

@@ -3,12 +3,13 @@ import test from "node:test";
 import {
   buildAntigravityRequestBody,
   convertDshMessagesToGemini,
+  convertDshToolsToGemini,
   friendlyAntigravityError,
   normalizeAntigravityUsage,
   streamAntigravity,
 } from "../src/stream/stream.js";
 import { buildCodexRequestBody, resolveCodexAutoEffort } from "../src/stream/codex.js";
-import { filterRequestTools, getLastUserText, getRequestToolProfile } from "../src/utils/request.js";
+import { filterRequestTools, getLastUserText, getRequestToolProfile, getSystemInstruction } from "../src/utils/request.js";
 import { ANTIGRAVITY_MODELS, resolveAutoEffort } from "../src/models/antigravity.js";
 import { CODEX_MODELS, getCodexContextWindow } from "../src/models/codex.js";
 import { streamCodex } from "../src/stream/codex.js";
@@ -571,3 +572,54 @@ test("Gemini API failures emit visible chat text before the terminal error", asy
 test("Gemini network failures have a useful visible fallback", () => {
   assert.match(friendlyAntigravityError(undefined, ""), /no response from Google/);
 });
+
+test("edge case: null/undefined/empty tools and messages handle gracefully without exceptions", () => {
+  assert.equal(filterRequestTools(null, null), undefined);
+  assert.equal(filterRequestTools(undefined, undefined), undefined);
+  assert.equal(filterRequestTools([], []), undefined);
+  assert.equal(getRequestToolProfile(null, null), "none");
+  assert.equal(getRequestToolProfile([], []), "none");
+  assert.equal(getLastUserText([]), "");
+  assert.equal(getLastUserText(null), "");
+  assert.equal(getSystemInstruction("", []), "");
+});
+
+test("edge case: Claude and Gemini tool schema conversions with deep nested properties", () => {
+  const complexTools = [
+    {
+      name: "run_query",
+      description: "Execute DB query",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          options: {
+            type: "object",
+            properties: {
+              timeout: { type: "number" },
+              nested: { type: "array", items: { type: "string" } },
+            },
+            required: ["timeout"],
+          },
+        },
+        required: ["query"],
+      },
+    },
+  ];
+
+  const geminiTools = convertDshToolsToGemini(complexTools, false);
+  assert.equal(geminiTools.length, 1);
+  assert.equal(geminiTools[0].functionDeclarations[0].name, "run_query");
+  assert.equal(geminiTools[0].functionDeclarations[0].parametersJsonSchema.required[0], "query");
+
+  const codexBody = buildCodexRequestBody({
+    model: "gpt-5.6-sol",
+    sessionId: "edge-test",
+    tools: complexTools,
+    messages: [{ role: "user", content: [{ type: "text", text: "query test" }] }],
+  });
+  assert.equal(codexBody.tools.length, 1);
+  assert.equal(codexBody.tools[0].name, "run_query");
+  assert.deepEqual(codexBody.tools[0].parameters.required, ["query"]);
+});
+
