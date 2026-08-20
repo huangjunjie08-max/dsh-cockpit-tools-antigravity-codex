@@ -17,6 +17,21 @@ const PROJECT_CACHE_TTL_MS = 30 * 60 * 1000;
 const MODEL_CACHE_TTL_MS = 30 * 60 * 1000;
 const DISCOVERY_TIMEOUT_MS = 8000;
 
+function discoverySignal(parentSignal) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DISCOVERY_TIMEOUT_MS);
+  const abort = () => controller.abort(parentSignal?.reason);
+  if (parentSignal?.aborted) controller.abort(parentSignal.reason);
+  parentSignal?.addEventListener("abort", abort, { once: true });
+  return {
+    signal: controller.signal,
+    cleanup() {
+      clearTimeout(timeout);
+      parentSignal?.removeEventListener("abort", abort);
+    },
+  };
+}
+
 export function stableProjectId(seed) {
   const bytes = createHash("sha1").update(`antigravity:${seed}`).digest().subarray(0, 16);
   bytes[6] = (bytes[6] & 0x0f) | 0x50;
@@ -83,15 +98,14 @@ export function extractProjectId(data) {
   return undefined;
 }
 
-export async function loadCodeAssist(token) {
+export async function loadCodeAssist(token, parentSignal) {
   const cached = projectCache.get(token);
   if (cached && cached.expiresAt > Date.now()) return cached.projectId;
 
   const endpoints = endpointCandidates();
   for (const endpoint of endpoints) {
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), DISCOVERY_TIMEOUT_MS);
+      const request = discoverySignal(parentSignal);
       const res = await fetch(`${endpoint}/v1internal:loadCodeAssist`, {
         method: "POST",
         headers: antigravityHeaders(token),
@@ -102,8 +116,8 @@ export async function loadCodeAssist(token) {
             pluginType: "GEMINI",
           },
         }),
-        signal: controller.signal,
-      }).finally(() => clearTimeout(timeout));
+        signal: request.signal,
+      }).finally(request.cleanup);
 
       if (!res.ok) continue;
       const data = await res.json();
@@ -137,7 +151,7 @@ export function resolveProjectId({ token, warmedProject, credentialProjectId, se
   return defaultProjectId(seed);
 }
 
-export async function fetchAvailableRuntimeModel(token, projectId, baseModel) {
+export async function fetchAvailableRuntimeModel(token, projectId, baseModel, parentSignal) {
   const cacheKey = `${token}:${projectId}:${baseModel}`;
   const cached = modelCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.result;
@@ -151,14 +165,13 @@ export async function fetchAvailableRuntimeModel(token, projectId, baseModel) {
       const endpoints = endpointCandidates();
       for (const endpoint of endpoints) {
         try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), DISCOVERY_TIMEOUT_MS);
+          const request = discoverySignal(parentSignal);
           const res = await fetch(`${endpoint}/v1internal:fetchAvailableModels`, {
             method: "POST",
             headers: antigravityHeaders(token),
             body: JSON.stringify({ project: projectId }),
-            signal: controller.signal,
-          }).finally(() => clearTimeout(timeout));
+            signal: request.signal,
+          }).finally(request.cleanup);
 
           if (!res.ok) continue;
           const data = await res.json();

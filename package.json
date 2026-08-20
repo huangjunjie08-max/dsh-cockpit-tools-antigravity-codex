@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-antigravity",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Google Antigravity & OpenAI Codex LLM provider plugin for DeepSeek Harness (DSH) with Cockpit Tools OAuth integration",
   "type": "module",
   "main": "src/index.js",
@@ -24,6 +24,9 @@
     "package.json"
   ],
   "dsh": {
+    "compatibility": {
+      "desktop": ">=2.5.0"
+    },
     "client": {
       "platform": "web",
       "inject": ["slots", "remote"]
@@ -34,7 +37,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-llm": ">=0.1.0"
+    "@deepseek-ai/dsh-llm": ">=0.1.0-0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {

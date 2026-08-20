@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { loadCodexCredentials, saveCodexCredentials } from "./codex-oauth.js";
 
 const COCKPIT_DIR = join(homedir(), ".antigravity_cockpit");
-const CODEX_DATA_AUTH = "D:\\apps\\CodexData\\.codex\\auth.json";
+const CODEX_HOME = process.env.CODEX_HOME || join(homedir(), ".codex");
+const CODEX_DATA_AUTH = join(CODEX_HOME, "auth.json");
 const PI_AUTH_PATH = join(homedir(), ".pi", "agent", "auth.json");
 
 const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";

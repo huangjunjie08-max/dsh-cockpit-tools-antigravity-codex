@@ -23,7 +23,7 @@
 
 ### 2. Cockpit Tools OAuth 双平台自动同步（免二次登录）
 - **Cockpit Antigravity 自动同步**：自动解密 `~/.antigravity_cockpit/accounts/`，随 Cockpit 账号切换而实时热更新。
-- **Cockpit OpenAI Codex 自动同步**：自动解密 `~/.antigravity_cockpit/codex_accounts/` 以及 `D:\apps\CodexData\.codex\auth.json`，在 DSH 中直接提供 `openai-codex` 路由。
+- **Cockpit OpenAI Codex 自动同步**：自动解密 `~/.antigravity_cockpit/codex_accounts/`，并读取 `CODEX_HOME/auth.json`（未设置时为 `~/.codex/auth.json`），在 DSH 中直接提供 `openai-codex` 路由。
   - 支持 `openai-codex/gpt-5.6-sol`、`openai-codex/gpt-5.6-terra`、`openai-codex/gpt-5.6-luna`、`openai-codex/o3-mini`、`openai-codex/o1`、`openai-codex/gpt-4o`。
 
 ### 3. 按模型精准配置推理等级（Reasoning Effort）

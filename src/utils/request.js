@@ -1,5 +1,30 @@
 const WEB_TOOLS = new Set(["web_search", "web_fetch", "fetch_content", "get_search_content"]);
 
+export const CODING_INSTRUCTION =
+  "You are a disciplined coding assistant. Before editing, clarify ambiguity instead of guessing. " +
+  "Stay within the requested scope; preserve exact names and text; reuse existing project components; " +
+  "never invent APIs, UI libraries, or speculative changes. Keep responses concise and tool-aware.";
+
+export function normalizePromptText(value) {
+  return String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+$/gm, "")
+    .trim();
+}
+
+export function canonicalizeJson(value, key) {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => canonicalizeJson(item));
+    return key === "required" ? items.slice().sort() : items;
+  }
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([entryKey, entryValue]) => [entryKey, canonicalizeJson(entryValue, entryKey)]),
+  );
+}
+
 function contentText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -20,10 +45,10 @@ export function getLastUserText(messages = []) {
 }
 
 export function getSystemInstruction(system, messages = []) {
-  const parts = [contentText(system).trim()];
+  const parts = [normalizePromptText(contentText(system))];
   for (const message of messages) {
     if (message?.role === "system") {
-      const text = contentText(message.content).trim();
+      const text = normalizePromptText(contentText(message.content));
       if (text) parts.push(text);
     }
   }

@@ -1,4 +1,4 @@
-import { getLastUserText } from "../utils/request.js";
+import { resolveFixedEffort } from "../utils/reasoning.js";
 
 export const ANTIGRAVITY_PROVIDER_ID = "antigravity";
 export const ANTIGRAVITY_PROVIDER_NAME = "Google Antigravity";
@@ -133,12 +133,11 @@ export const ANTIGRAVITY_MODELS = [
     maxTokens: 65536,
     reasoning: {
       efforts: [
-        { id: "auto", name: "Auto", description: "Automatically select effort based on task complexity" },
         { id: "low", name: "Low", description: "Minimal thinking overhead" },
         { id: "medium", name: "Medium", description: "Balanced thinking effort" },
         { id: "high", name: "High", description: "Deep reasoning effort" },
       ],
-      defaultEffort: "auto",
+      defaultEffort: "medium",
     },
   },
   {
@@ -148,12 +147,11 @@ export const ANTIGRAVITY_MODELS = [
     maxTokens: 65536,
     reasoning: {
       efforts: [
-        { id: "auto", name: "Auto", description: "Automatically select effort based on task complexity" },
         { id: "low", name: "Low", description: "Fast concise thinking" },
         { id: "medium", name: "Medium", description: "Standard reasoning" },
         { id: "high", name: "High", description: "Deep reasoning" },
       ],
-      defaultEffort: "auto",
+      defaultEffort: "medium",
     },
   },
   {
@@ -163,12 +161,11 @@ export const ANTIGRAVITY_MODELS = [
     maxTokens: 65536,
     reasoning: {
       efforts: [
-        { id: "auto", name: "Auto", description: "Automatically select effort based on task complexity" },
         { id: "low", name: "Low", description: "Fast concise thinking" },
         { id: "medium", name: "Medium", description: "Standard reasoning" },
         { id: "high", name: "High", description: "Deep reasoning" },
       ],
-      defaultEffort: "auto",
+      defaultEffort: "medium",
     },
   },
   {
@@ -178,11 +175,10 @@ export const ANTIGRAVITY_MODELS = [
     maxTokens: 65535,
     reasoning: {
       efforts: [
-        { id: "auto", name: "Auto", description: "Automatically select effort based on task complexity" },
         { id: "low", name: "Low", description: "Standard pro reasoning" },
         { id: "high", name: "High", description: "Pro agent deep reasoning" },
       ],
-      defaultEffort: "auto",
+      defaultEffort: "low",
     },
   },
   {
@@ -199,10 +195,9 @@ export const ANTIGRAVITY_MODELS = [
     maxTokens: 64000,
     reasoning: {
       efforts: [
-        { id: "auto", name: "Auto", description: "Automatically select effort based on task complexity" },
         { id: "high", name: "High", description: "Full thinking mode" },
       ],
-      defaultEffort: "auto",
+      defaultEffort: "high",
     },
   },
   {
@@ -212,10 +207,9 @@ export const ANTIGRAVITY_MODELS = [
     maxTokens: 64000,
     reasoning: {
       efforts: [
-        { id: "auto", name: "Auto", description: "Automatically select effort based on task complexity" },
         { id: "high", name: "High", description: "Opus thinking mode" },
       ],
-      defaultEffort: "auto",
+      defaultEffort: "high",
     },
   },
   {
@@ -225,10 +219,9 @@ export const ANTIGRAVITY_MODELS = [
     maxTokens: 32768,
     reasoning: {
       efforts: [
-        { id: "auto", name: "Auto", description: "Automatically select effort based on task complexity" },
         { id: "medium", name: "Medium", description: "Standard medium reasoning" },
       ],
-      defaultEffort: "auto",
+      defaultEffort: "medium",
     },
   },
 ];
@@ -252,60 +245,20 @@ export function getAntigravityRequestModelId(modelId, effort = "off") {
   );
 }
 
-/**
- * Resolve "auto" reasoning effort to a concrete level based on message complexity.
- * Heuristics (no plugin needed — pure local analysis):
- *   - Has tool calls / multi-step instructions → high
- *   - Long context or code-heavy → medium
- *   - Simple Q&A / short message → low
- *
- * Falls back to the model's defaultEffort (excluding "auto") if nothing matches.
- */
-export function resolveAutoEffort(modelId, messages = []) {
+export function resolveAntigravityEffort(modelId, requested, sessionId) {
   const model = ANTIGRAVITY_MODELS.find((m) => m.id === modelId);
-  const availableEfforts = (model?.reasoning?.efforts || [])
-    .map((e) => e.id)
-    .filter((id) => id !== "auto");
+  return resolveFixedEffort({
+    modelId,
+    requested,
+    sessionId,
+    available: model?.reasoning?.efforts?.map((effort) => effort.id),
+    fallback: model?.reasoning?.defaultEffort || "medium",
+  });
+}
 
-  // Helper: pick the closest available effort
-  const pick = (preferred) => {
-    if (availableEfforts.includes(preferred)) return preferred;
-    // fallback chain: high → medium → low → first available
-    for (const f of ["high", "medium", "low"]) {
-      if (availableEfforts.includes(f)) return f;
-    }
-    return availableEfforts[0] || "medium";
-  };
-
-  // Analyse the last user message (most recent intent)
-  const lastText = getLastUserText(messages);
-  const totalChars = lastText.length;
-
-  // Signals for HIGH effort
-  const highSignals = [
-    /\b(architect|migrate|security|concurrency|algorithm|complex|comprehensive|in[- ]depth)\b/i,
-    /```[\s\S]{200,}```/, // large code block
-    /\n.*\n.*\n.*\n.*\n/, // multi-line structured content
-  ];
-
-  // Signals for LOW effort
-  const lowSignals = [
-    /^(what|who|when|where|how much|how many|is |are |does |do |can |will |什么|谁|何时|哪里|是否|能否)/i,
-    /[?？]$/, // ends with question mark
-  ];
-
-  const isHigh =
-    totalChars > 3000 ||
-    highSignals.some((re) => re.test(lastText));
-
-  const isLow =
-    totalChars < 300 &&
-    lastText.length < 150 &&
-    lowSignals.some((re) => re.test(lastText.trim()));
-
-  if (isHigh) return pick("high");
-  if (isLow) return pick("low");
-  return pick("medium");
+// Compatibility for old callers and persisted UI values. No message heuristic remains.
+export function resolveAutoEffort(modelId, _messages = [], sessionId) {
+  return resolveAntigravityEffort(modelId, "auto", sessionId);
 }
 
 export function getFallbackRuntimeModel(runtimeModel, effort = "off") {

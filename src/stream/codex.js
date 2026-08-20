@@ -3,12 +3,14 @@ import { sanitizeText, isRecord, nowRequestId } from "../utils/util.js";
 import { safeError, redactSecrets } from "../utils/security.js";
 import { visibleFailureChunks } from "../utils/failure.js";
 import {
+  canonicalizeJson,
+  CODING_INSTRUCTION,
   filterRequestTools,
-  getLastUserText,
   getRequestToolProfile,
   getSystemInstruction,
 } from "../utils/request.js";
 import { CODEX_MODELS, resolveCodexModelId } from "../models/codex.js";
+import { resolveFixedEffort } from "../utils/reasoning.js";
 
 const DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
 const CODEX_CACHE_KEY_MAX_LENGTH = 64;
@@ -28,47 +30,20 @@ function buildCodexPromptCacheKey(modelId, sessionId, toolProfile) {
   return compactCacheKey(raw);
 }
 
-/**
- * Resolve "auto" reasoning effort for Codex models.
- * "auto" is a UI-only convenience; the API receives a concrete model effort.
- */
-export function resolveCodexAutoEffort(modelId, messages = []) {
+export function resolveCodexEffort(modelId, requested, sessionId) {
   const model = CODEX_MODELS.find((item) => item.id === resolveCodexModelId(modelId));
-  const availableEfforts = (model?.reasoning?.efforts || [])
-    .map((effort) => effort.id)
-    .filter((effort) => effort !== "auto");
-  const pick = (preferred) => {
-    if (availableEfforts.includes(preferred)) return preferred;
-    for (const effort of ["max", "xhigh", "high", "medium", "low", "none"]) {
-      if (availableEfforts.includes(effort)) return effort;
-    }
-    return availableEfforts[0];
-  };
+  return resolveFixedEffort({
+    modelId,
+    requested,
+    sessionId,
+    available: model?.reasoning?.efforts?.map((effort) => effort.id),
+    fallback: model?.reasoning?.defaultEffort || "medium",
+  });
+}
 
-  const lastText = getLastUserText(messages);
-  const totalChars = lastText.length;
-
-  const highSignals = [
-    /\b(architect|migrate|security|concurrency|algorithm|complex|comprehensive|in[- ]depth)\b/i,
-    /```[\s\S]{200,}```/,
-    /\n.*\n.*\n.*\n.*\n/,
-  ];
-  const lowSignals = [
-    /^(what|who|when|where|how much|how many|is |are |does |do |can |will |什么|谁|何时|哪里|是否|能否)/i,
-    /[?？]$/,
-  ];
-
-  const isHigh =
-    totalChars > 3000 ||
-    highSignals.some((re) => re.test(lastText));
-  const isLow =
-    totalChars < 300 &&
-    lastText.length < 150 &&
-    lowSignals.some((re) => re.test(lastText.trim()));
-
-  if (isHigh) return pick("high");
-  if (isLow) return pick("low");
-  return pick("medium");
+// Compatibility for old callers and persisted UI values. No message heuristic remains.
+export function resolveCodexAutoEffort(modelId, _messages = [], sessionId) {
+  return resolveCodexEffort(modelId, "auto", sessionId);
 }
 
 function convertDshMessagesToCodex(messages) {
@@ -144,11 +119,12 @@ function convertDshMessagesToCodex(messages) {
 
 function convertDshToolsToCodex(tools) {
   if (!Array.isArray(tools) || tools.length === 0) return undefined;
-  return tools.map((tool) => ({
+  const sortedTools = tools.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  return sortedTools.map((tool) => ({
     type: "function",
     name: tool.name,
     description: tool.description || "",
-    parameters: tool.parameters || { type: "object", properties: {} },
+    parameters: canonicalizeJson(tool.parameters || { type: "object", properties: {} }),
   }));
 }
 
@@ -212,9 +188,8 @@ function rememberCodexContinuation(sessionId, modelId, body, response) {
   });
 }
 
-export function buildCodexRequestBody(options) {
+export function buildCodexRequestBody(options, { explicitCache = true } = {}) {
   const modelId = resolveCodexModelId(options.model || "gpt-5.6-sol");
-  const input = convertDshMessagesToCodex(options.messages || []);
   const model = CODEX_MODELS.find((item) => item.id === modelId);
   const sessionId = typeof options.sessionId === "string" ? options.sessionId.trim() : "";
   const instructions = getSystemInstruction(options.system, options.messages || []);
@@ -223,16 +198,32 @@ export function buildCodexRequestBody(options) {
   const toolProfile = getRequestToolProfile(options.tools, options.messages || []);
   const promptCacheKey = buildCodexPromptCacheKey(modelId, sessionId, toolProfile);
 
-  // Resolve "auto" to a concrete effort — OpenAI API doesn't accept "auto"
-  const rawEffort = options.reasoningEffort || "auto";
-  const effort =
-    rawEffort === "auto" || rawEffort === "off"
-      ? resolveCodexAutoEffort(modelId, options.messages)
-      : rawEffort;
+  const rawEffort = options.reasoningEffort || model?.reasoning?.defaultEffort || "medium";
+  const effort = resolveCodexEffort(modelId, rawEffort, sessionId);
+  const useExplicitCache = explicitCache && modelId.startsWith("gpt-5.6-");
+  const conversationInput = convertDshMessagesToCodex(options.messages || []);
+  const input = useExplicitCache
+    ? [
+        {
+          type: "message",
+          role: "developer",
+          content: [
+            {
+              type: "input_text",
+              text: CODING_INSTRUCTION,
+              prompt_cache_breakpoint: { mode: "explicit" },
+            },
+          ],
+        },
+        ...(instructions
+          ? [{ type: "message", role: "developer", content: [{ type: "input_text", text: instructions }] }]
+          : []),
+        ...conversationInput,
+      ]
+    : conversationInput;
 
   const body = {
     model: modelId,
-    instructions: instructions || "You are a helpful coding assistant.",
     input,
     stream: true,
     store: false,
@@ -240,7 +231,12 @@ export function buildCodexRequestBody(options) {
       ? { text: { verbosity: process.env.DSH_CODEX_TEXT_VERBOSITY || "low" } }
       : {}),
     ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
+    ...(useExplicitCache ? { prompt_cache_options: { mode: "explicit" } } : {}),
   };
+
+  if (!useExplicitCache) {
+    body.instructions = instructions ? `${CODING_INSTRUCTION}\n\n${instructions}` : CODING_INSTRUCTION;
+  }
 
   if (model?.reasoning && effort && effort !== "off") {
     body.reasoning = {
@@ -266,8 +262,8 @@ export function buildCodexRequestBody(options) {
 
 export async function* streamCodex(options, credentials) {
   const token = credentials.access;
-  const body = buildCodexRequestBody(options);
-  const fullInput = body.input;
+  let body = buildCodexRequestBody(options);
+  let fullInput = body.input;
   const modelId = body.model;
   const sessionId = typeof options.sessionId === "string" ? options.sessionId.trim() : "";
   let requestBody = applyCodexContinuation(body, sessionId, modelId);
@@ -289,17 +285,32 @@ export async function* streamCodex(options, credentials) {
 
   const endpoint = process.env.CODEX_BASE_URL || DEFAULT_CODEX_URL;
   let response;
+  let lastResponseText = "";
+  let explicitCacheFallback = false;
 
   try {
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       response = await fetch(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify(requestBody),
         signal: options.signal,
       });
-      if (response.ok || !requestBody.previous_response_id || ![400, 404].includes(response.status)) break;
+      if (response.ok) break;
       const retryText = await response.text();
+      lastResponseText = retryText;
+      if (
+        !explicitCacheFallback &&
+        response.status === 400 &&
+        /Unsupported parameter.*(?:prompt_cache_options|prompt_cache_breakpoint)/i.test(retryText)
+      ) {
+        explicitCacheFallback = true;
+        body = buildCodexRequestBody(options, { explicitCache: false });
+        fullInput = body.input;
+        requestBody = applyCodexContinuation(body, sessionId, modelId);
+        continue;
+      }
+      if (!requestBody.previous_response_id || ![400, 404].includes(response.status)) break;
       if (!/previous_response_id|continuation|response not found|not found/i.test(retryText)) break;
       codexContinuations.delete(continuationKey(sessionId, modelId));
       requestBody = { ...body, input: fullInput };
@@ -321,7 +332,7 @@ export async function* streamCodex(options, credentials) {
   }
 
   if (!response.ok) {
-    const text = await response.text();
+    const text = lastResponseText || await response.text();
     let msg = text;
     try {
       const parsed = JSON.parse(text);

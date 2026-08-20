@@ -2,15 +2,22 @@ import {
   ANTIGRAVITY_PROVIDER_ID,
   ANTIGRAVITY_PROVIDER_NAME,
   ANTIGRAVITY_MODELS,
+  getAntigravityRequestModelId,
 } from "./models/antigravity.js";
 import {
   CODEX_PROVIDER_ID,
   CODEX_PROVIDER_NAME,
   CODEX_MODELS,
   resolveCodexModelId,
+  resolveCodexModelMetadata,
 } from "./models/codex.js";
 import { getValidCredentials } from "./auth/oauth.js";
 import { getValidCodexCredentials } from "./auth/cockpit-codex.js";
+import {
+  fetchAvailableRuntimeModel,
+  loadCodeAssist,
+  resolveProjectId,
+} from "./client/client.js";
 import { streamAntigravity } from "./stream/stream.js";
 import { streamCodex } from "./stream/codex.js";
 import { visibleFailureChunks } from "./utils/failure.js";
@@ -29,6 +36,64 @@ let BaseLlmAdapter = class {
     throw new Error("stream not implemented");
   }
 };
+
+function firstPositiveNumber(...values) {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number) && number > 0) return number;
+  }
+  return undefined;
+}
+
+export function normalizeAntigravityModelMetadata(found, runtime) {
+  const nested = runtime?.metadata && typeof runtime.metadata === "object" ? runtime.metadata : {};
+  const info = { ...runtime, ...nested };
+  return {
+    contextWindow:
+      firstPositiveNumber(
+        info.contextWindow,
+        info.context_window,
+        info.inputTokenLimit,
+        info.input_token_limit,
+        info.maxInputTokens,
+        info.max_input_tokens,
+        info.maxTokens,
+        info.max_tokens,
+        info.maxContextTokens,
+        info.max_context_tokens,
+        info.contextLength,
+        info.context_length,
+        found.contextWindow,
+      ) || found.contextWindow,
+    maxTokens:
+      firstPositiveNumber(
+        info.outputTokenLimit,
+        info.output_token_limit,
+        info.maxOutputTokens,
+        info.max_output_tokens,
+        found.maxTokens,
+      ) || found.maxTokens,
+  };
+}
+
+async function resolveAntigravityModelMetadata(model, found, signal) {
+  try {
+    const credentials = await getValidCredentials();
+    const token = credentials.access;
+    const warmedProject = credentials.projectId ? null : await loadCodeAssist(token, signal);
+    const projectId = resolveProjectId({
+      token,
+      warmedProject,
+      credentialProjectId: credentials.projectId,
+      seed: credentials.email || "antigravity-default",
+    });
+    const runtimeModel = getAntigravityRequestModelId(model, "off");
+    const runtime = await fetchAvailableRuntimeModel(token, projectId, runtimeModel, signal);
+    return normalizeAntigravityModelMetadata(found, runtime);
+  } catch {
+    return normalizeAntigravityModelMetadata(found);
+  }
+}
 
 try {
   const dshLlm = await import("@deepseek-ai/dsh-llm");
@@ -78,13 +143,14 @@ export class AntigravityAndCodexLlmAdapter extends BaseLlmAdapter {
         CODEX_MODELS.find((m) => m.id === model) ||
         CODEX_MODELS.find((m) => m.id === resolveCodexModelId(model)) ||
         CODEX_MODELS[0];
+      const metadata = await resolveCodexModelMetadata(model, signal);
 
       return {
         provider: provider,
         id: model,
         name: found.name,
         context: {
-          contextWindow: found.contextWindow,
+          contextWindow: metadata.contextWindow,
         },
         inputModalities: ["text", "image"],
         reasoning: found.reasoning
@@ -105,15 +171,16 @@ export class AntigravityAndCodexLlmAdapter extends BaseLlmAdapter {
     const found =
       ANTIGRAVITY_MODELS.find((m) => m.id === model) ||
       ANTIGRAVITY_MODELS[0];
+    const metadata = await resolveAntigravityModelMetadata(found.id, found, signal);
 
     return {
       provider: provider,
       id: model,
       name: found.name,
       context: {
-        contextWindow: found.contextWindow,
+        contextWindow: metadata.contextWindow,
       },
-      defaultMaxTokens: found.maxTokens,
+      defaultMaxTokens: metadata.maxTokens,
       inputModalities: ["text", "image"],
       reasoning: found.reasoning
         ? {

@@ -4,13 +4,16 @@ import {
   buildAntigravityRequestBody,
   convertDshMessagesToGemini,
   friendlyAntigravityError,
+  normalizeAntigravityUsage,
   streamAntigravity,
 } from "../src/stream/stream.js";
 import { buildCodexRequestBody, resolveCodexAutoEffort } from "../src/stream/codex.js";
 import { filterRequestTools, getLastUserText, getRequestToolProfile } from "../src/utils/request.js";
 import { ANTIGRAVITY_MODELS, resolveAutoEffort } from "../src/models/antigravity.js";
+import { CODEX_MODELS, getCodexContextWindow } from "../src/models/codex.js";
 import { streamCodex } from "../src/stream/codex.js";
 import { visibleFailureChunks } from "../src/utils/failure.js";
+import { normalizeAntigravityModelMetadata } from "../src/adapter.js";
 
 const messages = [
   { role: "system", content: [{ type: "text", text: "Follow repository rules." }] },
@@ -26,16 +29,20 @@ test("Codex keeps system instructions out of user history", () => {
     tools: [{ name: "pwsh", description: "Run PowerShell", parameters: { type: "object" } }],
   });
 
-  assert.equal(body.instructions, "Use concise answers.\n\nFollow repository rules.");
-  assert.equal(body.input[0].role, "user");
-  assert.equal(body.input[0].content[0].text, "Implement a small fix.");
+  assert.equal(body.instructions, undefined);
+  const stableDeveloper = body.input.find((item) => item.role === "developer");
+  assert.match(stableDeveloper.content[0].text, /You are a disciplined coding assistant\./);
+  assert.deepEqual(stableDeveloper.content[0].prompt_cache_breakpoint, { mode: "explicit" });
+  assert.match(body.input.find((item) => item.role === "developer" && item !== stableDeveloper).content[0].text, /Use concise answers\.\n\nFollow repository rules\./);
+  const userInput = body.input.find((item) => item.role === "user");
+  assert.equal(userInput.content[0].text, "Implement a small fix.");
   assert.equal(body.reasoning.effort, "medium");
   assert.equal(body.reasoning.context, "all_turns");
   assert.equal(body.text.verbosity, "low");
   assert.equal(body.input.some((item) => item.content?.[0]?.text?.includes("System Instruction")), false);
 });
 
-test("Codex Auto does not stay high after an old tool result", () => {
+test("legacy Auto values resolve to the last fixed effort", () => {
   const history = [
     { role: "user", content: [{ type: "text", text: "Fix the project." }] },
     { role: "assistant", content: [{ type: "tool-call", id: "call_1", name: "pwsh", arguments: "{}" }] },
@@ -43,8 +50,72 @@ test("Codex Auto does not stay high after an old tool result", () => {
     { role: "user", content: [{ type: "text", text: "Is it fixed?" }] },
   ];
 
-  assert.equal(resolveCodexAutoEffort("gpt-5.6-sol", history), "low");
-  assert.equal(resolveAutoEffort("gemini-3.6-flash", history), "low");
+  assert.equal(resolveCodexAutoEffort("gpt-5.6-sol", history, "fixed-effort-session"), "medium");
+  assert.equal(resolveCodexAutoEffort("gpt-5.6-sol", history, "fixed-effort-session"), "medium");
+  assert.equal(resolveAutoEffort("gemini-3.6-flash", history, "fixed-effort-session"), "medium");
+  assert.equal(resolveAutoEffort("gemini-3.6-flash", history, "fixed-effort-session"), "medium");
+
+  const high = buildCodexRequestBody({
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
+    sessionId: "remembered-effort-session",
+    messages: history,
+  });
+  const remembered = buildCodexRequestBody({
+    model: "gpt-5.6-sol",
+    reasoningEffort: "auto",
+    sessionId: "remembered-effort-session",
+    messages: history,
+  });
+  assert.equal(high.reasoning.effort, "high");
+  assert.equal(remembered.reasoning.effort, "high");
+  assert.equal(resolveCodexAutoEffort("gpt-5.6-sol", [], "fixed-effort-session"), "medium");
+});
+
+test("Codex uses the model catalog effective context window", () => {
+  assert.equal(CODEX_MODELS.find((model) => model.id === "gpt-5.6-luna").contextWindow, 272000);
+  assert.equal(
+    getCodexContextWindow("gpt-5.6-luna", {
+      context_window: 272000,
+      effective_context_window_percent: 95,
+    }),
+    258400,
+  );
+});
+
+test("Antigravity uses runtime context and output limits for every model family", () => {
+  const fallback = { contextWindow: 1048576, maxTokens: 65536 };
+  assert.deepEqual(
+    normalizeAntigravityModelMetadata(fallback, {
+      maxTokens: 3145728,
+      outputTokenLimit: 131072,
+    }),
+    { contextWindow: 3145728, maxTokens: 131072 },
+  );
+  assert.deepEqual(
+    normalizeAntigravityModelMetadata({ contextWindow: 250000, maxTokens: 64000 }),
+    { contextWindow: 250000, maxTokens: 64000 },
+  );
+});
+
+test("cache usage keeps the largest compatible read/write counters", () => {
+  assert.deepEqual(
+    normalizeAntigravityUsage({
+      usageMetadata: {
+        promptTokenCount: 1200,
+        cachedContentTokenCount: 0,
+        cacheTokensDetails: { cached_tokens: 900, cache_write_tokens: 40 },
+        candidatesTokenCount: 12,
+      },
+    }),
+    {
+      inputTokens: 260,
+      outputTokens: 12,
+      cacheReadTokens: 900,
+      cacheWriteTokens: 40,
+      reasoningTokens: 0,
+    },
+  );
 });
 
 test("all providers hide optional tools during coding turns", () => {
@@ -296,9 +367,12 @@ test("Gemini parses signed function calls as tool calls", async () => {
   }
 });
 
-test("Claude Sonnet exposes only Auto and High thinking levels", () => {
+test("all selectable thinking levels are fixed", () => {
   const sonnet = ANTIGRAVITY_MODELS.find((model) => model.id === "claude-sonnet-4-6");
-  assert.deepEqual(sonnet.reasoning.efforts.map((effort) => effort.id), ["auto", "high"]);
+  assert.deepEqual(sonnet.reasoning.efforts.map((effort) => effort.id), ["high"]);
+  for (const model of [...ANTIGRAVITY_MODELS, ...CODEX_MODELS]) {
+    assert.equal(Boolean(model.reasoning?.efforts?.some((effort) => effort.id === "auto")), false, model.id);
+  }
 });
 
 test("Codex uses previous response continuation when the history prefix is stable", async () => {
@@ -370,6 +444,48 @@ test("Codex uses previous response continuation when the history prefix is stabl
     globalThis.fetch = originalFetch;
     if (originalContinuation === undefined) delete process.env.DSH_CODEX_CONTINUATION;
     else process.env.DSH_CODEX_CONTINUATION = originalContinuation;
+  }
+});
+
+test("Codex retries with the legacy instruction shape when explicit cache is unsupported", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    calls.push(JSON.parse(init.body));
+    if (calls.length === 1) {
+      return { ok: false, status: 400, text: async () => "Unsupported parameter: prompt_cache_options" };
+    }
+    const payload = [
+      `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "ok" })}`,
+      `data: ${JSON.stringify({ type: "response.completed", response: { id: "cache-fallback", usage: { input_tokens: 1, output_tokens: 1 } } })}`,
+      "data: [DONE]",
+      "",
+    ].join("\n");
+    return {
+      ok: true,
+      status: 200,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(payload));
+          controller.close();
+        },
+      }),
+    };
+  };
+
+  try {
+    for await (const _event of streamCodex({
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
+      messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+    }, { access: "test" })) {}
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].prompt_cache_options.mode, "explicit");
+    assert.equal(calls[1].prompt_cache_options, undefined);
+    assert.match(calls[1].instructions, /You are a disciplined coding assistant\./);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

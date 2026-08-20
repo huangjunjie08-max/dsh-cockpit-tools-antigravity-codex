@@ -13,6 +13,7 @@ import { loginAntigravity, getValidCredentials, loadStoredCredentials } from "./
 import { loadCockpitCodexAuth, getValidCodexCredentials } from "./auth/cockpit-codex.js";
 import { loginCodex } from "./auth/codex-oauth.js";
 import { AntigravityOAuthService, readOAuthStatus } from "./oauth-service.js";
+import { AntigravityWebFetchProvider } from "./web/fetch.js";
 
 export const name = "dsh-plugin-antigravity";
 export const inject = ["llm"];
@@ -55,10 +56,26 @@ export function apply(ctx, config = {}) {
   } catch {
     // ignore
   }
+
+  // 3. Register Web Fetch Provider
+  try {
+    const web = ctx.get ? ctx.get("web", false) : ctx.web;
+    if (web && typeof web.registerFetchProvider === "function") {
+      web.registerFetchProvider(new AntigravityWebFetchProvider());
+      ctx.logger?.info?.(
+        "[dsh-plugin-antigravity] Registered WebFetchProvider: antigravity-fetch",
+      );
+    }
+  } catch (err) {
+    ctx.logger?.warn?.(
+      `[dsh-plugin-antigravity] Failed to register WebFetchProvider: ${err.message}`,
+    );
+  }
 }
 
 export {
   AntigravityAndCodexLlmAdapter,
+  AntigravityWebFetchProvider,
   ANTIGRAVITY_MODELS,
   CODEX_MODELS,
   ANTIGRAVITY_PROVIDER_ID,

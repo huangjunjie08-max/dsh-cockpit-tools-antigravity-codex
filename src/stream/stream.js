@@ -17,11 +17,11 @@ import {
   getAntigravityRequestModelId,
   getFallbackRuntimeModel,
   getMaxOutputTokens,
-  resolveAutoEffort,
+  resolveAntigravityEffort,
 } from "../models/antigravity.js";
 import { redactSecrets, safeError } from "../utils/security.js";
 import { antigravityEnv, isRecord, nowRequestId, sanitizeText } from "../utils/util.js";
-import { filterRequestTools, getLastUserText, getSystemInstruction } from "../utils/request.js";
+import { canonicalizeJson, CODING_INSTRUCTION, filterRequestTools, getSystemInstruction } from "../utils/request.js";
 import { visibleFailureChunks } from "../utils/failure.js";
 
 const ANTIGRAVITY_SYSTEM_INSTRUCTION =
@@ -31,10 +31,17 @@ const ANTIGRAVITY_SYSTEM_INSTRUCTION =
 const ANTIGRAVITY_NO_PREAMBLE_INSTRUCTION =
   'CRITICAL: NEVER output rule checks, formatting guidelines, constraint checklists (e.g. "No emdashes"), or your thinking/personality preambles in the final response. Output only the final response.';
 
+const ANTIGRAVITY_EXECUTION_DISCIPLINE_INSTRUCTION =
+  CODING_INSTRUCTION;
+
 let toolCallCounter = 0;
 
 function firstUsageNumber(...values) {
   return values.find((value) => typeof value === "number" && Number.isFinite(value)) ?? 0;
+}
+
+function maxUsageNumber(...values) {
+  return Math.max(0, ...values.filter((value) => typeof value === "number" && Number.isFinite(value)));
 }
 
 export function normalizeAntigravityUsage(data) {
@@ -48,7 +55,7 @@ export function normalizeAntigravityUsage(data) {
     usage.cache_read_input_tokens !== undefined ||
     usage.cache_creation_input_tokens !== undefined ||
     usage.uncached_input_tokens !== undefined;
-  const cacheReadTokens = firstUsageNumber(
+  const cacheReadTokens = maxUsageNumber(
     usage.cachedContentTokenCount,
     usage.total_cached_tokens,
     usage.totalCachedTokens,
@@ -58,8 +65,12 @@ export function normalizeAntigravityUsage(data) {
     usage.cached_tokens,
     inputDetails.cached_tokens,
     inputDetails.cache_read_tokens,
+    usage.cacheTokensDetails?.cached_tokens,
+    usage.cacheTokensDetails?.cache_read_tokens,
+    usage.cache_tokens_details?.cached_tokens,
+    usage.cache_tokens_details?.cache_read_tokens,
   );
-  const cacheWriteTokens = firstUsageNumber(
+  const cacheWriteTokens = maxUsageNumber(
     usage.cacheWriteTokens,
     usage.cache_write_tokens,
     usage.cache_creation_input_tokens,
@@ -67,6 +78,10 @@ export function normalizeAntigravityUsage(data) {
     usage.cacheCreationInputTokens,
     usage.cacheCreationTokens,
     inputDetails.cache_write_tokens,
+    usage.cacheTokensDetails?.cache_write_tokens,
+    usage.cacheTokensDetails?.cache_creation_input_tokens,
+    usage.cache_tokens_details?.cache_write_tokens,
+    usage.cache_tokens_details?.cache_creation_input_tokens,
   );
   const inputTokenCount = firstUsageNumber(
     usage.uncached_input_tokens,
@@ -200,13 +215,14 @@ function stripMetaSchema(schema) {
 
 export function convertDshToolsToGemini(tools, useLegacyParameters = false) {
   if (!Array.isArray(tools) || tools.length === 0) return undefined;
-  const functionDeclarations = tools.map((tool) => {
-    const schema = stripMetaSchema(tool.parameters || { type: "object", properties: {} });
+  const sortedTools = tools.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  const functionDeclarations = sortedTools.map((tool) => {
+    const schema = canonicalizeJson(stripMetaSchema(tool.parameters || { type: "object", properties: {} }));
     return {
       name: tool.name,
       description: tool.description || "",
       ...(useLegacyParameters
-        ? { parameters: normalizeCustomToolSchema(schema) }
+        ? { parameters: canonicalizeJson(normalizeCustomToolSchema(schema)) }
         : { parametersJsonSchema: schema }),
     };
   });
@@ -322,7 +338,7 @@ export function convertDshMessagesToGemini(messages, modelId, runtimeModel) {
 
 export function buildAntigravityRequestBody(options, projectId, runtimeModel) {
   const modelId = options.model || "gemini-3.7-flash";
-  const effort = options.reasoningEffort || "off";
+  const effort = resolveAntigravityEffort(modelId, options.reasoningEffort, options.sessionId) || "off";
   const contents = convertDshMessagesToGemini(options.messages || [], modelId, runtimeModel);
 
   const generationConfig = {
@@ -340,6 +356,7 @@ export function buildAntigravityRequestBody(options, projectId, runtimeModel) {
   const systemInstructions = [
     ANTIGRAVITY_SYSTEM_INSTRUCTION,
     ANTIGRAVITY_NO_PREAMBLE_INSTRUCTION,
+    ANTIGRAVITY_EXECUTION_DISCIPLINE_INSTRUCTION,
   ];
   const dshSystemInstruction = getSystemInstruction(options.system, options.messages || []);
   if (dshSystemInstruction) systemInstructions.push(dshSystemInstruction);
@@ -419,12 +436,8 @@ export async function* streamAntigravity(options, credentials) {
     seed: credentials.email || "antigravity-default",
   });
 
-  // Resolve "auto" effort to a concrete level before routing
-  const rawEffort = options.reasoningEffort || "off";
   const effort =
-    rawEffort === "auto"
-      ? resolveAutoEffort(options.model, options.messages)
-      : rawEffort;
+    resolveAntigravityEffort(options.model, options.reasoningEffort, options.sessionId) || "off";
 
   const baseRuntimeModel =
     antigravityEnv("RUNTIME_MODEL")?.trim() ||
