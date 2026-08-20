@@ -41,38 +41,37 @@
 
 ---
 
-## 🚀 安装与导入到 DSH
+## 🚀 一键安装与启用
 
-### 步骤 1：安装依赖到 DSH Web Profile
+### 推荐：DSH 官方单行命令安装（自动下载依赖并注册 Bundle）
+
+在任何终端中直接执行一行命令：
+
 ```bash
-cd %USERPROFILE%\.dsh\profiles\web
-pnpm add file:D:\dsh_tools\dsh-antigravity
+dsh plugin --profile web add github:huangjunjie08-max/dsh-cockpit-tools-antigravity-codex
 ```
 
-### 步骤 2：在 profile 中启用 Bundle
-编辑 `%USERPROFILE%\.dsh\profiles\web\package.json`，在 `dsh.profile.bundles` 中加入 `"dsh-plugin-antigravity"`：
-```json
-{
-  "name": "dsh-profile-web",
-  "private": true,
-  "dependencies": {
-    "dsh-plugin-antigravity": "file:D:/dsh_tools/dsh-antigravity",
-    "dshmarket": "^1.12.1"
-  },
-  "dsh": {
-    "profile": {
-      "bundles": [
-        "@deepseek-ai/dsh-base",
-        "@deepseek-ai/dsh-web-app",
-        "dsh-plugin-antigravity",
-        "dshmarket"
-      ]
-    }
-  }
-}
+> 💡 **原理说明**：`dsh plugin add` 会自动调用 pnpm 安装依赖，并由于本插件声明了 `dsh.bundle`，DSH 会**自动将 `dsh-plugin-antigravity` 注册到 `dsh.profile.bundles` 中**，全程 100% 自动化，无需手动打开并编辑 `package.json`！
+
+---
+
+### 离线或本地安装方式
+
+如果处于内网或本地调试环境：
+
+```bash
+# 离线 TGZ 包单行安装
+dsh plugin --profile web add /path/to/dsh-plugin-antigravity-1.3.0.tgz
+
+# 或本地目录单行安装
+dsh plugin --profile web add /path/to/dsh-antigravity
 ```
 
-### 步骤 3：启动 DSH
+---
+
+### 启动使用
+
+安装完成后启动 DSH：
 ```bash
 dsh web
 ```
