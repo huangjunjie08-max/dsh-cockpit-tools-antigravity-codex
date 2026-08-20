@@ -22,42 +22,36 @@ export function apply(ctx, config = {}) {
   new AntigravityOAuthService(ctx);
   const adapter = new AntigravityAndCodexLlmAdapter();
 
-  // 1. Always register Antigravity adapter (Gemini & Claude)
+  // 1. Register Antigravity and Codex adapters
+  const existingProviders = new Set((ctx.llm?.listProviders?.() || []).map((p) => p?.id));
+  const routes = [ANTIGRAVITY_PROVIDER_ID];
+
+  // If openai-codex is not yet registered (which is the case when cordis.patch.yml disables llm-openai-codex)
+  if (!existingProviders.has(CODEX_PROVIDER_ID)) {
+    routes.push(CODEX_PROVIDER_ID);
+  }
+
   try {
-    ctx.llm.registerAdapter([ANTIGRAVITY_PROVIDER_ID], adapter);
+    ctx.llm.registerAdapter(routes, adapter);
     ctx.logger?.info?.(
-      `[dsh-plugin-antigravity] Registered provider: ${ANTIGRAVITY_PROVIDER_ID}`,
+      `[dsh-plugin-antigravity] Registered providers: ${routes.join(", ")}`,
     );
   } catch (err) {
-    ctx.logger?.warn?.(
-      `[dsh-plugin-antigravity] Failed to register ${ANTIGRAVITY_PROVIDER_ID}: ${err.message}`,
-    );
-  }
-
-  // 2. Safely register OpenAI Codex adapter only if not already owned by built-in dsh-codex-connect
-  const existingProviders = new Set((ctx.llm?.listProviders?.() || []).map((p) => p?.id));
-  const hasCodexConflict = existingProviders.has(CODEX_PROVIDER_ID);
-
-  if (!hasCodexConflict) {
     try {
-      ctx.llm.registerAdapter([CODEX_PROVIDER_ID], adapter);
+      ctx.llm.registerAdapter([ANTIGRAVITY_PROVIDER_ID], adapter);
       ctx.logger?.info?.(
-        `[dsh-plugin-antigravity] Registered provider: ${CODEX_PROVIDER_ID}`,
+        `[dsh-plugin-antigravity] Registered provider: ${ANTIGRAVITY_PROVIDER_ID}`,
       );
-    } catch (err) {
-      ctx.logger?.info?.(
-        `[dsh-plugin-antigravity] Skipped registering ${CODEX_PROVIDER_ID} (coexisting with built-in/external Codex adapter): ${err.message}`,
+    } catch (fallbackErr) {
+      ctx.logger?.warn?.(
+        `[dsh-plugin-antigravity] Failed to register adapter: ${fallbackErr.message}`,
       );
     }
-  } else {
-    ctx.logger?.info?.(
-      `[dsh-plugin-antigravity] Provider ${CODEX_PROVIDER_ID} already registered by external plugin. Coexisting peacefully.`,
-    );
   }
 
-  // 3. Declare configurable providers in DSH directory
+  // 2. Declare configurable providers in DSH directory
   try {
-    const configurableProviders = [
+    ctx.llm.declareConfigurableProviders([
       {
         provider: ANTIGRAVITY_PROVIDER_ID,
         displayName: ANTIGRAVITY_PROVIDER_NAME,
@@ -65,22 +59,19 @@ export function apply(ctx, config = {}) {
         settingsPath: [],
         declared: false,
       },
-    ];
-    if (!hasCodexConflict) {
-      configurableProviders.push({
+      {
         provider: CODEX_PROVIDER_ID,
         displayName: CODEX_PROVIDER_NAME,
         settingsNs: "llm-codex",
         settingsPath: [],
         declared: false,
-      });
-    }
-    ctx.llm.declareConfigurableProviders(configurableProviders);
+      },
+    ]);
   } catch {
     // ignore
   }
 
-  // 4. Register Web Fetch Provider
+  // 3. Register Web Fetch Provider
   try {
     const web = ctx.get ? ctx.get("web", false) : ctx.web;
     if (web && typeof web.registerFetchProvider === "function") {

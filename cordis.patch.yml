@@ -1,4 +1,7 @@
-# dsh bundle patch: inserts Antigravity LLM provider into the profile layer stack
+# dsh bundle patch: takes over OpenAI Codex and inserts Antigravity LLM provider into the profile layer stack
+- id: llm-openai-codex
+  disabled: true
+
 - insert:
     - id: llm-antigravity
       name: 'dsh-plugin-antigravity'
