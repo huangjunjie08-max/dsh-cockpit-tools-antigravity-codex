@@ -33,10 +33,10 @@
   - **GPT-5.6 Sol / Terra / Luna**：提供 `None` / `Low` / `Medium` / `High` / `X-High` / `Max` 档位，并额外提供插件侧 `Auto` 自动选择，默认 `Auto`。
 - **非思考模型**（如 `gemini-3.1-flash-lite`、`gpt-4o`）：自动隐藏/禁用思考下拉框。
 
-### 4. 低 Token 请求优化
-- 所有支持 Auto 的模型都只根据**当前用户请求**判断复杂度，不会因为历史上调用过工具就持续升到 High。
-- Codex 使用稳定的 `instructions`、`prompt_cache_key`、GPT-5.6 的 `reasoning.context`，并在连续会话中尝试 `previous_response_id`；服务端不支持时会自动回退到完整输入。
-- 普通编程请求默认隐藏联网、记忆和图片桥接工具 schema；搜索/记忆请求命中时才临时放开。可用 `DSH_ANTIGRAVITY_TOOL_MODE=all|research|memory|vision` 调整。
+### 4. 极致 Prompt Cache 命中率与低 Token 优化
+- **Cache-First 默认前缀稳定化**：默认采用全量 Canonical 规范化工具 Schema 与稳定前缀，避免会话多轮交互中因工具增删抖动而击穿服务端 Prompt Cache，实现 Claude、Gemini、Codex 近 100% 缓存命中与毫秒级首字延迟（TTFT）。
+- **Codex 稳定 Cache Key 与会话续接**：Codex 生成稳定的会话专属 `prompt_cache_key`，配合 `previous_response_id` 续接与 Explicit Breakpoint，享受最大化 Cached Token 折扣。
+- **灵活策略可调**：如需对极短单轮会话进行轻量化剪裁，仍可通过 `DSH_ANTIGRAVITY_TOOL_MODE=coding|research|memory|vision|all` 自由切换策略。
 - DSH Web profile 默认切到 Code preset，并关闭 OpenViking、Hindsight、ModLens 的常驻上下文注入。需要记忆或图片能力时，再在 profile patch 中移除对应的 `disabled: true`。
 
 ---

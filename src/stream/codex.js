@@ -24,7 +24,7 @@ function compactCacheKey(value) {
 function buildCodexPromptCacheKey(modelId, sessionId, toolProfile) {
   if (!sessionId) return undefined;
   const raw =
-    toolProfile === "coding"
+    !toolProfile || toolProfile === "coding" || toolProfile === "all"
       ? `dsh-codex:${modelId}:${sessionId}`
       : `dsh-codex:${modelId}:${toolProfile}:${sessionId}`;
   return compactCacheKey(raw);

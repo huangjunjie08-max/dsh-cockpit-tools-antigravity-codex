@@ -118,24 +118,39 @@ test("cache usage keeps the largest compatible read/write counters", () => {
   );
 });
 
-test("all providers hide optional tools during coding turns", () => {
+test("all providers preserve stable tools by default for cache-first hits", () => {
   const tools = [
     { name: "pwsh" },
     { name: "web_search" },
     { name: "viking_search" },
     { name: "modlens_read_image" },
   ];
+  // Default mode ("all") keeps all tools stable across turns
   assert.deepEqual(
     filterRequestTools(tools, [{ role: "user", content: [{ type: "text", text: "Fix the bug." }] }]).map((tool) => tool.name),
-    ["pwsh"],
+    ["pwsh", "web_search", "viking_search", "modlens_read_image"],
   );
-  assert.deepEqual(
-    filterRequestTools(tools, [{ role: "user", content: [{ type: "text", text: "Search the latest docs online." }] }]).map((tool) => tool.name),
-    ["pwsh", "web_search"],
-  );
+  assert.equal(getRequestToolProfile(tools, [{ role: "user", content: [{ type: "text", text: "Fix the bug." }] }]), "all");
+
+  // Explicit "coding" mode dynamically filters optional tools
+  const originalMode = process.env.DSH_ANTIGRAVITY_TOOL_MODE;
+  try {
+    process.env.DSH_ANTIGRAVITY_TOOL_MODE = "coding";
+    assert.deepEqual(
+      filterRequestTools(tools, [{ role: "user", content: [{ type: "text", text: "Fix the bug." }] }]).map((tool) => tool.name),
+      ["pwsh"],
+    );
+    assert.deepEqual(
+      filterRequestTools(tools, [{ role: "user", content: [{ type: "text", text: "Search the latest docs online." }] }]).map((tool) => tool.name),
+      ["pwsh", "web_search"],
+    );
+  } finally {
+    if (originalMode === undefined) delete process.env.DSH_ANTIGRAVITY_TOOL_MODE;
+    else process.env.DSH_ANTIGRAVITY_TOOL_MODE = originalMode;
+  }
 });
 
-test("tool profiles ignore DSH context and preserve intent after tool results", () => {
+test("tool profiles ignore DSH context and preserve intent after tool results in coding mode", () => {
   const tools = [
     { name: "pwsh" },
     { name: "web_search" },
@@ -164,12 +179,19 @@ test("tool profiles ignore DSH context and preserve intent after tool results", 
     },
   ];
 
-  assert.equal(getLastUserText(messages), "Search the latest docs online.");
-  assert.equal(getRequestToolProfile(tools, messages), "web");
-  assert.deepEqual(filterRequestTools(tools, messages).map((tool) => tool.name), ["pwsh", "web_search"]);
+  const originalMode = process.env.DSH_ANTIGRAVITY_TOOL_MODE;
+  try {
+    process.env.DSH_ANTIGRAVITY_TOOL_MODE = "coding";
+    assert.equal(getLastUserText(messages), "Search the latest docs online.");
+    assert.equal(getRequestToolProfile(tools, messages), "web");
+    assert.deepEqual(filterRequestTools(tools, messages).map((tool) => tool.name), ["pwsh", "web_search"]);
+  } finally {
+    if (originalMode === undefined) delete process.env.DSH_ANTIGRAVITY_TOOL_MODE;
+    else process.env.DSH_ANTIGRAVITY_TOOL_MODE = originalMode;
+  }
 });
 
-test("Codex isolates cache entries when optional tool profiles change", () => {
+test("Codex keeps stable cache key across turns in default cache-first mode", () => {
   const tools = [
     { name: "pwsh" },
     { name: "web_search" },
@@ -177,15 +199,24 @@ test("Codex isolates cache entries when optional tool profiles change", () => {
   const codingMessages = [{ role: "user", content: [{ type: "text", text: "Fix the bug." }] }];
   const researchMessages = [{ role: "user", content: [{ type: "text", text: "Search the latest docs online." }] }];
 
-  assert.equal(getRequestToolProfile(tools, codingMessages), "coding");
-  assert.equal(getRequestToolProfile(tools, researchMessages), "web");
-
+  // Default mode: Cache Key remains stable for the session
   const coding = buildCodexRequestBody({ model: "gpt-5.6-luna", sessionId: "cache-test", messages: codingMessages, tools });
   const research = buildCodexRequestBody({ model: "gpt-5.6-luna", sessionId: "cache-test", messages: researchMessages, tools });
   assert.equal(coding.prompt_cache_key, "dsh-codex:gpt-5.6-luna:cache-test");
-  assert.notEqual(coding.prompt_cache_key, research.prompt_cache_key);
+  assert.equal(research.prompt_cache_key, "dsh-codex:gpt-5.6-luna:cache-test");
   assert.equal(coding.prompt_cache_key.length <= 64, true);
-  assert.equal(research.prompt_cache_key.length <= 64, true);
+
+  // In explicit coding mode, profiles isolate cache entries when tool sets change
+  const originalMode = process.env.DSH_ANTIGRAVITY_TOOL_MODE;
+  try {
+    process.env.DSH_ANTIGRAVITY_TOOL_MODE = "coding";
+    const codingDynamic = buildCodexRequestBody({ model: "gpt-5.6-luna", sessionId: "cache-test", messages: codingMessages, tools });
+    const researchDynamic = buildCodexRequestBody({ model: "gpt-5.6-luna", sessionId: "cache-test", messages: researchMessages, tools });
+    assert.notEqual(codingDynamic.prompt_cache_key, researchDynamic.prompt_cache_key);
+  } finally {
+    if (originalMode === undefined) delete process.env.DSH_ANTIGRAVITY_TOOL_MODE;
+    else process.env.DSH_ANTIGRAVITY_TOOL_MODE = originalMode;
+  }
 });
 
 test("Codex compacts long cache keys without changing their session scope", () => {

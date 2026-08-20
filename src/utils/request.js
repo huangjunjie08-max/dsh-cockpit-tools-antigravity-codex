@@ -74,8 +74,8 @@ function wantsMemory(text) {
 export function getRequestToolProfile(tools, messages = []) {
   if (!Array.isArray(tools) || tools.length === 0) return "none";
 
-  const mode = (process.env.DSH_ANTIGRAVITY_TOOL_MODE || "coding").trim().toLowerCase();
-  if (mode === "all") return "all";
+  const mode = (process.env.DSH_ANTIGRAVITY_TOOL_MODE || "all").trim().toLowerCase();
+  if (mode === "all" || mode === "cache" || mode === "cache-first") return "all";
 
   const lastText = getLastUserText(messages);
   const profiles = [];
@@ -88,8 +88,8 @@ export function getRequestToolProfile(tools, messages = []) {
 export function filterRequestTools(tools, messages = []) {
   if (!Array.isArray(tools) || tools.length === 0) return undefined;
 
-  const mode = (process.env.DSH_ANTIGRAVITY_TOOL_MODE || "coding").trim().toLowerCase();
-  if (mode === "all") return tools;
+  const mode = (process.env.DSH_ANTIGRAVITY_TOOL_MODE || "all").trim().toLowerCase();
+  if (mode === "all" || mode === "cache" || mode === "cache-first") return tools;
 
   const profile = new Set(getRequestToolProfile(tools, messages).split("+"));
 
