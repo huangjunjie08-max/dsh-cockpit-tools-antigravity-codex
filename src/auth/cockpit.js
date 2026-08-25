@@ -4,16 +4,23 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { defaultProjectId } from "../client/client.js";
 
-const COCKPIT_DIR = join(homedir(), ".antigravity_cockpit");
-
-export function hasCockpitTools() {
-  return existsSync(COCKPIT_DIR);
+function getCandidateCockpitDirs() {
+  const candidates = [
+    join(homedir(), ".antigravity_cockpit"),
+    ...(process.env.DSH_HOME
+      ? [join(process.env.DSH_HOME, "..", "antigravity_cockpit"), join(process.env.DSH_HOME, "antigravity_cockpit")]
+      : []),
+    "D:\\app\\DSH Desktop 2.0.2\\data\\antigravity_cockpit",
+  ];
+  return [...new Set(candidates)].filter((d) => existsSync(d));
 }
 
-export function loadCockpitAntigravityAuth() {
-  if (!existsSync(COCKPIT_DIR)) return null;
+export function hasCockpitTools() {
+  return getCandidateCockpitDirs().length > 0;
+}
 
-  const keyPath = join(COCKPIT_DIR, "secure-account-storage.key");
+function loadAuthFromDir(cockpitDir) {
+  const keyPath = join(cockpitDir, "secure-account-storage.key");
   if (!existsSync(keyPath)) return null;
 
   let key;
@@ -23,7 +30,7 @@ export function loadCockpitAntigravityAuth() {
     return null;
   }
 
-  const accountsJsonPath = join(COCKPIT_DIR, "accounts.json");
+  const accountsJsonPath = join(cockpitDir, "accounts.json");
   let currentId = null;
   let accountList = [];
   if (existsSync(accountsJsonPath)) {
@@ -36,7 +43,7 @@ export function loadCockpitAntigravityAuth() {
     }
   }
 
-  const accountsDir = join(COCKPIT_DIR, "accounts");
+  const accountsDir = join(cockpitDir, "accounts");
   if (!existsSync(accountsDir)) return null;
 
   const files = readdirSync(accountsDir).filter(
@@ -44,7 +51,6 @@ export function loadCockpitAntigravityAuth() {
   );
   if (files.length === 0) return null;
 
-  // Find target file based on current_account_id or most recently used/modified
   let targetFile = null;
   if (currentId) {
     const matched = files.find((f) => f === `${currentId}.json`);
@@ -100,20 +106,29 @@ export function loadCockpitAntigravityAuth() {
       };
     }
   } catch (err) {
-    // decryption failed or corrupted
+    // ignore
   }
 
   return null;
 }
 
-export function listCockpitAccounts() {
-  if (!existsSync(COCKPIT_DIR)) return [];
-  const accountsJsonPath = join(COCKPIT_DIR, "accounts.json");
-  if (!existsSync(accountsJsonPath)) return [];
-  try {
-    const data = JSON.parse(readFileSync(accountsJsonPath, "utf8"));
-    return data.accounts || [];
-  } catch {
-    return [];
+export function loadCockpitAntigravityAuth() {
+  for (const dir of getCandidateCockpitDirs()) {
+    const auth = loadAuthFromDir(dir);
+    if (auth) return auth;
   }
+  return null;
+}
+
+export function listCockpitAccounts() {
+  for (const dir of getCandidateCockpitDirs()) {
+    const accountsJsonPath = join(dir, "accounts.json");
+    if (existsSync(accountsJsonPath)) {
+      try {
+        const data = JSON.parse(readFileSync(accountsJsonPath, "utf8"));
+        if (data.accounts) return data.accounts;
+      } catch {}
+    }
+  }
+  return [];
 }
