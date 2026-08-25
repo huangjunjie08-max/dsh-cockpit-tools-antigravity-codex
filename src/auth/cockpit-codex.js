@@ -1,18 +1,26 @@
 import { createDecipheriv } from "node:crypto";
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { loadCodexCredentials, saveCodexCredentials } from "./codex-oauth.js";
 
 function getCandidateCockpitDirs() {
   const candidates = [
     join(homedir(), ".antigravity_cockpit"),
     ...(process.env.DSH_HOME
-      ? [join(process.env.DSH_HOME, "..", "antigravity_cockpit"), join(process.env.DSH_HOME, "antigravity_cockpit")]
+      ? [
+          join(process.env.DSH_HOME, "..", "antigravity_cockpit"),
+          join(process.env.DSH_HOME, "antigravity_cockpit"),
+        ]
       : []),
-    "D:\\app\\DSH Desktop 2.0.2\\data\\antigravity_cockpit",
+    ...(process.execPath
+      ? [
+          join(dirname(process.execPath), "data", "antigravity_cockpit"),
+          join(dirname(process.execPath), "..", "data", "antigravity_cockpit"),
+        ]
+      : []),
   ];
-  return [...new Set(candidates)].filter((d) => existsSync(d));
+  return [...new Set(candidates.filter(Boolean))].filter((d) => existsSync(d));
 }
 
 const CODEX_HOME = process.env.CODEX_HOME || join(homedir(), ".codex");

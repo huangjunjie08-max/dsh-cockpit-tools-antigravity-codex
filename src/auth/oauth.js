@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { defaultProjectId, loadCodeAssist } from "../client/client.js";
 import { escapeHtml, antigravityEnv } from "../utils/util.js";
 import { resolveCallbackHost, redactSecrets, safeError } from "../utils/security.js";
@@ -255,21 +255,39 @@ export async function refreshAntigravityToken(refreshToken, existingProjectId) {
   return creds;
 }
 
-const DSH_AUTH_PATH = join(homedir(), ".dsh", "antigravity-auth.json");
 const PI_AUTH_PATH = join(homedir(), ".pi", "agent", "auth.json");
 
+function getCandidateDshAuthPaths() {
+  const candidates = [
+    join(homedir(), ".dsh", "antigravity-auth.json"),
+    ...(process.env.DSH_HOME
+      ? [
+          join(process.env.DSH_HOME, "antigravity-auth.json"),
+          join(process.env.DSH_HOME, "..", "antigravity-auth.json"),
+        ]
+      : []),
+    ...(process.execPath
+      ? [
+          join(dirname(process.execPath), "data", "antigravity-auth.json"),
+          join(dirname(process.execPath), "data", "home", "antigravity-auth.json"),
+        ]
+      : []),
+  ];
+  return [...new Set(candidates.filter(Boolean))];
+}
+
 export function loadStoredCredentials() {
-  // 1. Prefer the plugin-owned OAuth file so Cockpit Tools is optional.
-  if (existsSync(DSH_AUTH_PATH)) {
-    try {
-      const raw = JSON.parse(readFileSync(DSH_AUTH_PATH, "utf8"));
-      if (raw.access || raw.refresh) return { source: "dsh-auth-file", ...raw };
-    } catch {
-      // ignore
+  // 1. Prefer the plugin-owned OAuth file in all standard and portable locations
+  for (const authPath of getCandidateDshAuthPaths()) {
+    if (existsSync(authPath)) {
+      try {
+        const raw = JSON.parse(readFileSync(authPath, "utf8"));
+        if (raw.access || raw.refresh) return { source: "dsh-auth-file", ...raw };
+      } catch {}
     }
   }
 
-  // 2. Cockpit Tools OAuth integration (~/.antigravity_cockpit)
+  // 2. Cockpit Tools OAuth integration (~/.antigravity_cockpit / portable)
   const cockpitAuth = loadCockpitAntigravityAuth();
   if (cockpitAuth && (cockpitAuth.access || cockpitAuth.refresh)) return cockpitAuth;
 
@@ -283,9 +301,7 @@ export function loadStoredCredentials() {
           ...piAuth.antigravity,
         };
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   // 4. Environment variables
@@ -306,12 +322,12 @@ export function loadStoredCredentials() {
 }
 
 export function saveStoredCredentials(creds) {
-  try {
-    const dir = join(homedir(), ".dsh");
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(DSH_AUTH_PATH, JSON.stringify(creds, null, 2), "utf8");
-  } catch {
-    // ignore
+  for (const targetPath of getCandidateDshAuthPaths()) {
+    try {
+      const dir = dirname(targetPath);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      writeFileSync(targetPath, JSON.stringify(creds, null, 2), "utf8");
+    } catch {}
   }
 
   try {
@@ -320,9 +336,7 @@ export function saveStoredCredentials(creds) {
       piAuth.antigravity = creds;
       writeFileSync(PI_AUTH_PATH, JSON.stringify(piAuth, null, 2), "utf8");
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 export async function getValidCredentials() {
