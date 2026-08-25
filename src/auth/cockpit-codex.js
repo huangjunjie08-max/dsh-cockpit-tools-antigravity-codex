@@ -141,3 +141,46 @@ export function loadCockpitCodexAuth() {
 
   return null;
 }
+
+export async function refreshCodexToken(refreshToken) {
+  const response = await fetch(OPENAI_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: OPENAI_CLIENT_ID,
+    }).toString(),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OpenAI Codex token refresh failed: ${text}`);
+  }
+
+  const json = await response.json();
+  return {
+    access: json.access_token,
+    refresh: json.refresh_token || refreshToken,
+    expires: Date.now() + (json.expires_in || 3600) * 1000,
+  };
+}
+
+export async function getValidCodexCredentials() {
+  let creds = loadCockpitCodexAuth();
+  if (!creds || !creds.access) {
+    throw new Error("No OpenAI Codex credentials found from this plugin, Cockpit Tools, Codex, or Pi.");
+  }
+
+  if (creds.expires && Date.now() >= creds.expires - 2 * 60 * 1000 && creds.refresh) {
+    try {
+      const refreshed = await refreshCodexToken(creds.refresh);
+      creds = { ...creds, ...refreshed };
+      if (creds.source === "dsh-codex-auth") saveCodexCredentials(creds);
+    } catch (error) {
+      if (!creds.access) throw error;
+    }
+  }
+
+  return creds;
+}
