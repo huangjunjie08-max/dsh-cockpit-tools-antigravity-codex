@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+
+# Build and tarball artifacts
+*.tgz
+*.tar.gz
+dist/
+build/
+
+# Logs and runtime traces
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+
+# Test coverage & system artifacts
+coverage/
+.nyc_output/
+.system_generated/
+.gemini/
+.antigravity/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db

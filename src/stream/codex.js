@@ -14,6 +14,21 @@ import { resolveFixedEffort } from "../utils/reasoning.js";
 
 const DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
 const CODEX_CACHE_KEY_MAX_LENGTH = 64;
+const CODEX_NETWORK_RETRY_DELAYS_MS = [200, 600];
+
+async function fetchCodexWithRetry(endpoint, init, signal) {
+  let lastError;
+  for (let attempt = 0; attempt <= CODEX_NETWORK_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      return await fetch(endpoint, init);
+    } catch (error) {
+      lastError = error;
+      if (signal?.aborted || attempt === CODEX_NETWORK_RETRY_DELAYS_MS.length) throw error;
+      await new Promise((resolve) => setTimeout(resolve, CODEX_NETWORK_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+  throw lastError;
+}
 
 function compactCacheKey(value) {
   const chars = Array.from(value);
@@ -290,7 +305,7 @@ export async function* streamCodex(options, credentials) {
 
   try {
     for (let attempt = 0; attempt < 3; attempt++) {
-      response = await fetch(endpoint, {
+      response = await fetchCodexWithRetry(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify(requestBody),

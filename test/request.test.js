@@ -521,6 +521,46 @@ test("Codex retries with the legacy instruction shape when explicit cache is uns
   }
 });
 
+test("Codex retries transient connection failures after compaction", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    if (calls === 1) throw new TypeError("fetch failed");
+    const payload = [
+      `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "ok" })}`,
+      `data: ${JSON.stringify({ type: "response.completed", response: { id: "retry-ok" } })}`,
+      "data: [DONE]",
+      "",
+    ].join("\n");
+    return {
+      ok: true,
+      status: 200,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(payload));
+          controller.close();
+        },
+      }),
+    };
+  };
+
+  try {
+    const events = [];
+    for await (const event of streamCodex(
+      { model: "gpt-5.6-luna", reasoningEffort: "low", messages: [] },
+      { access: "test" },
+    )) {
+      events.push(event);
+    }
+    assert.equal(calls, 2);
+    assert.equal(events.at(-1).reason.kind, "stop");
+    assert.equal(events.some((event) => event.type === "text-delta" && /fetch failed/.test(event.text || "")), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("provider failures emit visible chat text without exposing secrets", () => {
   const chunks = [...visibleFailureChunks("401 Bearer secret-token")];
 
@@ -622,4 +662,3 @@ test("edge case: Claude and Gemini tool schema conversions with deep nested prop
   assert.equal(codexBody.tools[0].name, "run_query");
   assert.deepEqual(codexBody.tools[0].parameters.required, ["query"]);
 });
-
