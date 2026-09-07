@@ -279,7 +279,8 @@ export class AntigravityAndCodexLlmAdapter extends BaseLlmAdapter {
 
     if (provider === CODEX_PROVIDER_ID || provider === "codex") {
       try {
-        yield* streamCodex(options);
+        const credentials = await getValidCodexCredentials();
+        yield* streamCodex(options, credentials);
       } catch (err) {
         yield* visibleFailureChunks(err);
       }
