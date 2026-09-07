@@ -19,7 +19,17 @@ export const name = "dsh-plugin-antigravity";
 export const inject = ["llm"];
 
 export function apply(ctx, config = {}) {
-  new AntigravityOAuthService(ctx);
+  const oauthService = new AntigravityOAuthService(ctx);
+
+  // Expose /api/antigravityOAuth/* HTTP routes if apiGateway / host webserver is available
+  try {
+    const gateway = ctx.get ? ctx.get("apiGateway", false) : ctx.apiGateway;
+    if (gateway && typeof gateway.registerRoute === "function") {
+      gateway.registerRoute("antigravityOAuth/status", () => oauthService.status());
+      gateway.registerRoute("antigravityOAuth/loginAntigravity", () => oauthService.loginAntigravity());
+      gateway.registerRoute("antigravityOAuth/loginCodex", () => oauthService.loginCodex());
+    }
+  } catch {}
   const adapter = new AntigravityAndCodexLlmAdapter();
 
   // 1. Register Antigravity and Codex adapters

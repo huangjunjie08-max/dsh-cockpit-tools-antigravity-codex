@@ -32,6 +32,12 @@ export class AntigravityOAuthService extends Service {
   constructor(ctx) {
     super(ctx, "antigravityOAuth");
     this.typertRemote = Object.freeze({ service: this, serviceKey: this.name, namespace: "antigravityOAuth" });
+    // Also register explicitly in typert if available
+    try {
+      if (ctx.typert && typeof ctx.typert.registerService === "function") {
+        ctx.typert.registerService(this.name, this);
+      }
+    } catch {}
   }
 
   status() {
