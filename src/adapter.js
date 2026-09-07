@@ -288,7 +288,8 @@ export class AntigravityAndCodexLlmAdapter extends BaseLlmAdapter {
     }
 
     try {
-      yield* streamAntigravity(options);
+      const credentials = await getValidCredentials();
+      yield* streamAntigravity(options, credentials);
     } catch (err) {
       yield* visibleFailureChunks(err);
     }
