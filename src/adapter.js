@@ -1,7 +1,8 @@
 import {
   ANTIGRAVITY_PROVIDER_ID,
   ANTIGRAVITY_PROVIDER_NAME,
-  ANTIGRAVITY_MODELS,
+  STATIC_ANTIGRAVITY_MODELS,
+  buildDynamicModelEntry,
   getAntigravityRequestModelId,
 } from "./models/antigravity.js";
 import {
@@ -14,6 +15,7 @@ import {
 import { getValidCredentials } from "./auth/oauth.js";
 import { getValidCodexCredentials } from "./auth/cockpit-codex.js";
 import {
+  fetchAllAvailableModels,
   fetchAvailableRuntimeModel,
   loadCodeAssist,
   resolveProjectId,
@@ -63,16 +65,16 @@ export function normalizeAntigravityModelMetadata(found, runtime) {
         info.max_context_tokens,
         info.contextLength,
         info.context_length,
-        found.contextWindow,
-      ) || found.contextWindow,
+        found?.contextWindow,
+      ) || found?.contextWindow || 1048576,
     maxTokens:
       firstPositiveNumber(
         info.outputTokenLimit,
         info.output_token_limit,
         info.maxOutputTokens,
         info.max_output_tokens,
-        found.maxTokens,
-      ) || found.maxTokens,
+        found?.maxTokens,
+      ) || found?.maxTokens || 65536,
   };
 }
 
@@ -128,7 +130,59 @@ export class AntigravityAndCodexLlmAdapter extends BaseLlmAdapter {
       }));
     }
 
-    return ANTIGRAVITY_MODELS.map((m) => ({
+    // 1. Antigravity Provider: Try Dynamic Cloud Discovery
+    try {
+      const credentials = await getValidCredentials();
+      const token = credentials?.access;
+      if (token) {
+        const warmedProject = credentials.projectId ? null : await loadCodeAssist(token);
+        const projectId = resolveProjectId({
+          token,
+          warmedProject,
+          credentialProjectId: credentials.projectId,
+          seed: credentials.email || "antigravity-default",
+        });
+        const cloudModels = await fetchAllAvailableModels(token, projectId);
+        if (cloudModels && typeof cloudModels === "object") {
+          const modelList = [];
+          const seen = new Set();
+
+          // Add clean curated primary models first
+          for (const s of STATIC_ANTIGRAVITY_MODELS) {
+            modelList.push({
+              provider: provider,
+              id: s.id,
+              name: s.name,
+              inputModalities: ["text", "image"],
+            });
+            seen.add(s.id);
+          }
+
+          // Add any newly discovered raw models from Google Antigravity backend
+          for (const [rawId, rawMeta] of Object.entries(cloudModels)) {
+            // Ignore placeholder / internal non-chat models
+            if (rawId.startsWith("tab_") || rawId.startsWith("chat_") || seen.has(rawId)) {
+              continue;
+            }
+            const built = buildDynamicModelEntry(rawId, rawMeta);
+            modelList.push({
+              provider: provider,
+              id: built.id,
+              name: built.name,
+              inputModalities: built.inputModalities,
+            });
+            seen.add(rawId);
+          }
+
+          return modelList;
+        }
+      }
+    } catch {
+      // Fallback to static catalog on failure
+    }
+
+    // Fallback: Static Antigravity Models
+    return STATIC_ANTIGRAVITY_MODELS.map((m) => ({
       provider: provider,
       id: m.id,
       name: m.name,
@@ -168,9 +222,33 @@ export class AntigravityAndCodexLlmAdapter extends BaseLlmAdapter {
     }
 
     // 2. Antigravity Provider
-    const found =
-      ANTIGRAVITY_MODELS.find((m) => m.id === model) ||
-      ANTIGRAVITY_MODELS[0];
+    let found = STATIC_ANTIGRAVITY_MODELS.find((m) => m.id === model);
+
+    // If not in static list, check dynamic discovery cache
+    if (!found) {
+      try {
+        const credentials = await getValidCredentials();
+        const token = credentials?.access;
+        if (token) {
+          const projectId = resolveProjectId({
+            token,
+            credentialProjectId: credentials.projectId,
+            seed: credentials.email || "antigravity-default",
+          });
+          const cloudModels = await fetchAllAvailableModels(token, projectId, signal);
+          if (cloudModels && cloudModels[model]) {
+            found = buildDynamicModelEntry(model, cloudModels[model]);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!found) {
+      found = STATIC_ANTIGRAVITY_MODELS[0];
+    }
+
     const metadata = await resolveAntigravityModelMetadata(found.id, found, signal);
 
     return {
@@ -181,7 +259,7 @@ export class AntigravityAndCodexLlmAdapter extends BaseLlmAdapter {
         contextWindow: metadata.contextWindow,
       },
       defaultMaxTokens: metadata.maxTokens,
-      inputModalities: ["text", "image"],
+      inputModalities: found.inputModalities || ["text", "image"],
       reasoning: found.reasoning
         ? {
             efforts: found.reasoning.efforts.map((e) => ({
@@ -199,51 +277,19 @@ export class AntigravityAndCodexLlmAdapter extends BaseLlmAdapter {
   async *stream(options) {
     const provider = options.provider;
 
-    // Dispatch to Codex
     if (provider === CODEX_PROVIDER_ID || provider === "codex") {
-      let credentials;
       try {
-        credentials = await getValidCodexCredentials();
+        yield* streamCodex(options);
       } catch (err) {
-        const message = `OpenAI Codex credentials missing: ${err.message}. Please login in Cockpit Tools.`;
-        yield* visibleFailureChunks(message);
-        yield {
-          type: "finish",
-          reason: {
-            kind: "error",
-            failure: {
-              message,
-              code: "NO_CODEX_CREDENTIALS",
-            },
-          },
-        };
-        return;
+        yield* visibleFailureChunks(err);
       }
-
-      yield* streamCodex(options, credentials);
       return;
     }
 
-    // Dispatch to Antigravity
-    let credentials;
     try {
-      credentials = await getValidCredentials();
+      yield* streamAntigravity(options);
     } catch (err) {
-      const message = `Antigravity credentials missing: ${err.message}. Please login via 'node bin/login.js' or Cockpit Tools.`;
-      yield* visibleFailureChunks(message);
-      yield {
-        type: "finish",
-        reason: {
-          kind: "error",
-          failure: {
-            message,
-            code: "NO_CREDENTIALS",
-          },
-        },
-      };
-      return;
+      yield* visibleFailureChunks(err);
     }
-
-    yield* streamAntigravity(options, credentials);
   }
 }

@@ -5,16 +5,6 @@ export const ANTIGRAVITY_PROVIDER_NAME = "Google Antigravity";
 
 /**
  * Public selectable model IDs -> backend request model IDs by thinking effort.
- *
- * Catalog mirrors Antigravity CLI (`agy models`) and Pi Coding Agent:
- * - Gemini 3.7 Flash
- * - Gemini 3.6 Flash
- * - Gemini 3.5 Flash
- * - Gemini 3.1 Pro
- * - Gemini 3.1 Flash Lite
- * - Claude Sonnet 4.6 (Thinking)
- * - Claude Opus 4.6 (Thinking)
- * - GPT-OSS 120B (Medium)
  */
 export const ANTIGRAVITY_ROUTING = {
   "claude-opus-4-6": {
@@ -29,14 +19,22 @@ export const ANTIGRAVITY_ROUTING = {
   "claude-sonnet-4-6": {
     off: "claude-sonnet-4-6",
     routing: {
+      minimal: "claude-sonnet-4-6",
+      low: "claude-sonnet-4-6",
+      medium: "claude-sonnet-4-6",
       high: "claude-sonnet-4-6",
+      xhigh: "claude-sonnet-4-6",
     },
     defaultRequestId: "claude-sonnet-4-6",
   },
   "claude-3-7-sonnet": {
     off: "claude-sonnet-4-6",
     routing: {
+      minimal: "claude-sonnet-4-6",
+      low: "claude-sonnet-4-6",
+      medium: "claude-sonnet-4-6",
       high: "claude-sonnet-4-6",
+      xhigh: "claude-sonnet-4-6",
     },
     defaultRequestId: "claude-sonnet-4-6",
   },
@@ -125,7 +123,7 @@ export const RUNTIME_MAX_OUTPUT_TOKENS = {
   "gpt-oss-120b-medium": 32768,
 };
 
-export const ANTIGRAVITY_MODELS = [
+export const STATIC_ANTIGRAVITY_MODELS = [
   {
     id: "gemini-3.7-flash",
     name: "Gemini 3.7 Flash (Antigravity)",
@@ -186,28 +184,31 @@ export const ANTIGRAVITY_MODELS = [
     name: "Gemini 3.1 Flash Lite (Antigravity)",
     contextWindow: 1048576,
     maxTokens: 65535,
-    reasoning: undefined, // Non-reasoning model
   },
   {
     id: "claude-sonnet-4-6",
-    name: "Claude Sonnet 4.6 (Antigravity Thinking)",
-    contextWindow: 250000,
+    name: "Claude Sonnet 4.6 (Antigravity)",
+    contextWindow: 200000,
     maxTokens: 64000,
     reasoning: {
       efforts: [
-        { id: "high", name: "High", description: "Full thinking mode" },
+        { id: "low", name: "Low", description: "Short thinking budget" },
+        { id: "medium", name: "Medium", description: "Balanced thinking" },
+        { id: "high", name: "High", description: "Deep thinking" },
       ],
       defaultEffort: "high",
     },
   },
   {
     id: "claude-opus-4-6",
-    name: "Claude Opus 4.6 (Antigravity Thinking)",
-    contextWindow: 250000,
+    name: "Claude Opus 4.6 (Antigravity)",
+    contextWindow: 200000,
     maxTokens: 64000,
     reasoning: {
       efforts: [
-        { id: "high", name: "High", description: "Opus thinking mode" },
+        { id: "low", name: "Low", description: "Concise thinking" },
+        { id: "medium", name: "Medium", description: "Standard thinking" },
+        { id: "high", name: "High", description: "Deep thinking" },
       ],
       defaultEffort: "high",
     },
@@ -219,34 +220,63 @@ export const ANTIGRAVITY_MODELS = [
     maxTokens: 32768,
     reasoning: {
       efforts: [
-        { id: "medium", name: "Medium", description: "Standard medium reasoning" },
+        { id: "low", name: "Low", description: "Minimal thinking" },
+        { id: "medium", name: "Medium", description: "Default medium reasoning" },
+        { id: "high", name: "High", description: "Extended reasoning" },
       ],
       defaultEffort: "medium",
     },
   },
 ];
 
-export function getAntigravityRequestModelId(modelId, effort = "off") {
-  const r = ANTIGRAVITY_ROUTING[modelId];
-  if (!r) return modelId;
+export const ANTIGRAVITY_MODELS = STATIC_ANTIGRAVITY_MODELS;
 
-  // "auto" is resolved upstream before reaching here; treat as "off" fallback
-  if (!effort || effort === "off" || effort === "auto") {
-    return r.off || r.routing?.minimal || r.routing?.low || r.defaultRequestId || modelId;
+export function getAntigravityRequestModelId(model, reasoningEffort) {
+  const config = ANTIGRAVITY_ROUTING[model];
+  if (!config) return model;
+
+  if (reasoningEffort === "off" || !reasoningEffort) {
+    return config.off || config.defaultRequestId || model;
   }
 
-  return (
-    r.routing?.[effort] ||
-    r.routing?.high ||
-    r.routing?.low ||
-    r.off ||
-    r.defaultRequestId ||
-    modelId
-  );
+  const resolved = resolveFixedEffort(reasoningEffort);
+  if (config.routing && config.routing[resolved]) {
+    return config.routing[resolved];
+  }
+
+  return config.defaultRequestId || model;
 }
 
+export function buildDynamicModelEntry(rawId, rawMeta) {
+  const name = rawMeta?.displayName ? `${rawMeta.displayName} (Antigravity)` : `${rawId} (Antigravity)`;
+  const contextWindow = Number(rawMeta?.maxTokens || rawMeta?.contextWindow || 1048576);
+  const maxTokens = Number(rawMeta?.maxOutputTokens || rawMeta?.outputTokenLimit || 65536);
+  const supportsImages = rawMeta?.supportsImages !== false;
+
+  const supportsThinking = rawMeta?.supportsThinking === true;
+  let reasoning;
+  if (supportsThinking) {
+    reasoning = {
+      efforts: [
+        { id: "low", name: "Low", description: "Fast concise thinking" },
+        { id: "medium", name: "Medium", description: "Balanced thinking effort" },
+        { id: "high", name: "High", description: "Deep reasoning effort" },
+      ],
+      defaultEffort: "medium",
+    };
+  }
+
+  return {
+    id: rawId,
+    name,
+    contextWindow,
+    maxTokens,
+    inputModalities: supportsImages ? ["text", "image"] : ["text"],
+    ...(reasoning ? { reasoning } : {}),
+  };
+}
 export function resolveAntigravityEffort(modelId, requested, sessionId) {
-  const model = ANTIGRAVITY_MODELS.find((m) => m.id === modelId);
+  const model = STATIC_ANTIGRAVITY_MODELS.find((m) => m.id === modelId);
   return resolveFixedEffort({
     modelId,
     requested,
@@ -256,7 +286,6 @@ export function resolveAntigravityEffort(modelId, requested, sessionId) {
   });
 }
 
-// Compatibility for old callers and persisted UI values. No message heuristic remains.
 export function resolveAutoEffort(modelId, _messages = [], sessionId) {
   return resolveAntigravityEffort(modelId, "auto", sessionId);
 }
@@ -281,5 +310,5 @@ export function getMaxOutputTokens(modelId, runtimeModel) {
   if (RUNTIME_MAX_OUTPUT_TOKENS[modelId] !== undefined) {
     return RUNTIME_MAX_OUTPUT_TOKENS[modelId];
   }
-  return 8192;
+  return 65536;
 }

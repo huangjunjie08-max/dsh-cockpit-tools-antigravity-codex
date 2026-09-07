@@ -11,7 +11,9 @@ export const ENDPOINT_FALLBACKS = [
 
 const projectCache = new Map();
 const modelCache = new Map();
+const allModelsCache = new Map();
 const inFlightModelLookups = new Map();
+let inFlightAllModelsLookup = null;
 
 const PROJECT_CACHE_TTL_MS = 30 * 60 * 1000;
 const MODEL_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -151,16 +153,19 @@ export function resolveProjectId({ token, warmedProject, credentialProjectId, se
   return defaultProjectId(seed);
 }
 
-export async function fetchAvailableRuntimeModel(token, projectId, baseModel, parentSignal) {
-  const cacheKey = `${token}:${projectId}:${baseModel}`;
-  const cached = modelCache.get(cacheKey);
+/**
+ * Fetch all available models from Google Antigravity cloud backend with caching.
+ */
+export async function fetchAllAvailableModels(token, projectId, parentSignal) {
+  const cacheKey = `${token}:${projectId}`;
+  const cached = allModelsCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.result;
 
-  if (inFlightModelLookups.has(cacheKey)) {
-    return inFlightModelLookups.get(cacheKey);
+  if (inFlightAllModelsLookup) {
+    return inFlightAllModelsLookup;
   }
 
-  const lookupPromise = (async () => {
+  inFlightAllModelsLookup = (async () => {
     try {
       const endpoints = endpointCandidates();
       for (const endpoint of endpoints) {
@@ -177,15 +182,39 @@ export async function fetchAvailableRuntimeModel(token, projectId, baseModel, pa
           const data = await res.json();
           if (data && isRecord(data.models)) {
             const models = data.models;
-            if (models[baseModel]) {
-              const info = { id: baseModel, ...models[baseModel] };
-              modelCache.set(cacheKey, { result: info, expiresAt: Date.now() + MODEL_CACHE_TTL_MS });
-              return info;
-            }
+            allModelsCache.set(cacheKey, { result: models, expiresAt: Date.now() + MODEL_CACHE_TTL_MS });
+            return models;
           }
         } catch {
-          // ignore
+          // ignore and try next
         }
+      }
+    } finally {
+      inFlightAllModelsLookup = null;
+    }
+    return undefined;
+  })();
+
+  return inFlightAllModelsLookup;
+}
+
+export async function fetchAvailableRuntimeModel(token, projectId, baseModel, parentSignal) {
+  const cacheKey = `${token}:${projectId}:${baseModel}`;
+  const cached = modelCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.result;
+
+  if (inFlightModelLookups.has(cacheKey)) {
+    return inFlightModelLookups.get(cacheKey);
+  }
+
+  const lookupPromise = (async () => {
+    try {
+      // First try fetching all models (populates all cache)
+      const allModels = await fetchAllAvailableModels(token, projectId, parentSignal);
+      if (allModels && allModels[baseModel]) {
+        const info = { id: baseModel, ...allModels[baseModel] };
+        modelCache.set(cacheKey, { result: info, expiresAt: Date.now() + MODEL_CACHE_TTL_MS });
+        return info;
       }
     } finally {
       inFlightModelLookups.delete(cacheKey);
